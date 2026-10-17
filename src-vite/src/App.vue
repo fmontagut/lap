@@ -44,6 +44,17 @@ watch(
   }
 );
 
+watch(
+  () => [config.settings.importXmpSidecars, config.settings.syncXmpSidecars],
+  ([importEnabled, syncEnabled]) => {
+    invoke('set_xmp_sync_settings', {
+      importEnabled: importEnabled !== false,
+      syncEnabled: !!syncEnabled,
+    }).catch(console.error);
+  },
+  { immediate: true }
+);
+
 onMounted(async () => {
   const win = getCurrentWebviewWindow();
   if (win.label === 'main') {

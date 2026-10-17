@@ -727,7 +727,12 @@
       "set_desktop_wallpaper": "Instellen als bureaubladachtergrond",
       "show_info": "Info tonen",
       "remove_from_collection": "Uit collectie halen",
-      "create_montage": "Collage maken"
+      "create_montage": "Collage maken",
+      "xmp_metadata": "XMP-sidecar",
+      "import_xmp": "Importeren uit XMP",
+      "export_xmp": "Schrijven naar XMP",
+      "xmp_import_success": "Metadata geïmporteerd uit {count} XMP-sidecar(s)",
+      "xmp_export_success": "Metadata weggeschreven naar {count} XMP-sidecar(s)"
     },
     "calendar": {
       "monthly": "Per maand",
@@ -1330,7 +1335,12 @@
       "source_embedded": "Ingesloten",
       "source_rendered": "Gerenderd",
       "source_brightened": "Ophelderd",
-      "preview_mode": "RAW-voorbeeldmodus"
+      "preview_mode": "RAW-voorbeeldmodus",
+      "section_xmp": "XMP-sidecars",
+      "xmp_import": "XMP-metadata importeren",
+      "xmp_import_hint": "Lees beoordelingen, tags, selectievlaggen, opmerkingen en kleurlabels uit .xmp-sidecars",
+      "xmp_sync": "2-weg XMP-synchronisatie",
+      "xmp_sync_hint": "Schrijf beoordelingen, vlaggen, tags en opmerkingen automatisch terug naar .xmp-bestanden"
     },
     "browse": {
       "section_album": "Albummap",

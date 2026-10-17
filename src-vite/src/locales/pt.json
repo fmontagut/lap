@@ -727,7 +727,12 @@
       "set_desktop_wallpaper": "Definir como papel de parede",
       "show_info": "Mostrar info",
       "remove_from_collection": "Remover da coleção",
-      "create_montage": "Criar colagem"
+      "create_montage": "Criar colagem",
+      "xmp_metadata": "Sidecar XMP",
+      "import_xmp": "Importar do XMP",
+      "export_xmp": "Gravar no XMP",
+      "xmp_import_success": "Metadados importados de {count} arquivo(s) sidecar XMP",
+      "xmp_export_success": "Metadados gravados em {count} arquivo(s) sidecar XMP"
     },
     "calendar": {
       "monthly": "Mensal",
@@ -1330,7 +1335,12 @@
       "source_embedded": "Incorporada",
       "source_rendered": "Renderizada",
       "source_brightened": "Clareada",
-      "preview_mode": "Modo de pré-visualização RAW"
+      "preview_mode": "Modo de pré-visualização RAW",
+      "section_xmp": "Sidecars XMP",
+      "xmp_import": "Importar metadados XMP",
+      "xmp_import_hint": "Ler classificações, tags, sinalizadores, comentários e rótulos de cores dos sidecars .xmp",
+      "xmp_sync": "Sincronização bidirecional de XMP",
+      "xmp_sync_hint": "Gravar automaticamente classificações, sinalizadores, tags e comentários de volta nos arquivos .xmp"
     },
     "browse": {
       "section_album": "Pasta do álbum",

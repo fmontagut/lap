@@ -770,7 +770,8 @@ import { getAlbum, getAllAlbums, recountAlbum, getQueryCountAndSum, getQueryTime
          updateFileInfo, refreshFileInfo, getSupportedFormatExtensions, importFile, importUrl, importFileBytes, getDragPayload, importClipboard, addFileToDb, checkFileExists, checkFileAccessibility, cancelIndexing as cancelIndexingApi, selectFolder, getFacesForFile, listenFaceIndexProgress,
          openFilesWithApp, getAppConfig, getIndexRecoveryInfo, clearIndexRecoveryInfo, setLastSelectedItemIndex,
          dedupDelete, getQueryFilePosition, getFolderSearchExcluded,
-         listCollections, createCollection, addFilesToCollection, removeFilesFromCollection, getFileCollections, getCollectionCountAndSum, getCollectionFiles, getCollectionGroupedQueryRows, getCollectionGroupFileIds, getCollectionQueryFileIds, fetchFolder, isDirectoryAccessible, checkAlbumAccessibility, addTagToFile } from '@/common/api';
+         listCollections, createCollection, addFilesToCollection, removeFilesFromCollection, getFileCollections, getCollectionCountAndSum, getCollectionFiles, getCollectionGroupedQueryRows, getCollectionGroupFileIds, getCollectionQueryFileIds, fetchFolder, isDirectoryAccessible, checkAlbumAccessibility, addTagToFile,
+         importXmpMetadata, exportXmpMetadata } from '@/common/api';
 import { config, libConfig } from '@/common/config';
 import {
   gridSizeFromPosition,
@@ -4346,6 +4347,43 @@ function handleItemAction(payload: { action: string, index: number }) {
       }
     },
     'reveal': () => revealPath(fileList.value[selectedItemIndex.value].file_path),
+    'import-xmp': async () => {
+      const ids = selectMode.value
+        ? Array.from(selectedFileIds)
+        : [Number(fileList.value[selectedItemIndex.value]?.id)].filter(id => id > 0);
+      if (ids.length === 0) return;
+      try {
+        const count = await importXmpMetadata(ids);
+        toast.success(t('menu.file.xmp_import_success', { count }));
+        for (const id of ids) {
+          const updated = await getFileInfo(id);
+          if (updated) {
+            const file = fileList.value.find((f: any) => Number(f?.id) === id);
+            if (file) {
+              Object.assign(file, updated);
+            }
+          }
+        }
+        fileInfoRevision.value++;
+        if (count > 0) {
+          await tauriEmit('tags-changed');
+        }
+      } catch (err: any) {
+        toast.error(String(err));
+      }
+    },
+    'export-xmp': async () => {
+      const ids = selectMode.value
+        ? Array.from(selectedFileIds)
+        : [Number(fileList.value[selectedItemIndex.value]?.id)].filter(id => id > 0);
+      if (ids.length === 0) return;
+      try {
+        const count = await exportXmpMetadata(ids);
+        toast.success(t('menu.file.xmp_export_success', { count }));
+      } catch (err: any) {
+        toast.error(String(err));
+      }
+    },
     'refresh-file-info': () => selectMode.value ? startSelectedFileRefresh() : void updateFile(fileList.value[selectedItemIndex.value], true),
     'favorite': toggleFavorite,
     'rotate': clickRotate,

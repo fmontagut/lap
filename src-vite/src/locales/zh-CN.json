@@ -727,7 +727,12 @@
       "set_desktop_wallpaper": "设为桌面壁纸",
       "show_info": "显示信息",
       "remove_from_collection": "从合集移除",
-      "create_montage": "创建拼图"
+      "create_montage": "创建拼图",
+      "xmp_metadata": "XMP 附属文件",
+      "import_xmp": "从 XMP 导入",
+      "export_xmp": "写入到 XMP",
+      "xmp_import_success": "已从 {count} 个 XMP 文件导入元数据",
+      "xmp_export_success": "已将元数据写入 {count} 个 XMP 文件"
     },
     "calendar": {
       "monthly": "按月",
@@ -1330,7 +1335,12 @@
       "source_embedded": "内嵌",
       "source_rendered": "渲染",
       "source_brightened": "提亮",
-      "preview_mode": "RAW 预览方式"
+      "preview_mode": "RAW 预览方式",
+      "section_xmp": "XMP 附属文件",
+      "xmp_import": "导入 XMP 元数据",
+      "xmp_import_hint": "从 .xmp 文件读取评分、标签、选片标记、备注和颜色标签",
+      "xmp_sync": "双向 XMP 同步",
+      "xmp_sync_hint": "自动将评分、标记、标签和备注回写到 .xmp 文件"
     },
     "browse": {
       "section_album": "相册文件夹",

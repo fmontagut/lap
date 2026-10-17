@@ -155,6 +155,8 @@ export const useConfigStore = defineStore('configStore', {
       rawPairDisplaySource: 'jpeg', // jpeg | raw (used when pairs are grouped)
       rawPreviewSource: 'embedded', // embedded | rendered
       rawRenderBrightness: 'original', // original | brightened
+      importXmpSidecars: true,    // import ratings, tags, comments, color labels from .xmp
+      syncXmpSidecars: false,     // 2-way sync: write metadata changes back to .xmp
       
       // grid view settings
       thumbnailSize: 512,         // gallery thumbnail quality: 256, 512, or 1024

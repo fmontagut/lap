@@ -104,6 +104,21 @@ export const useFileMenuItems = (
       // disable the entry rather than showing an empty app list.
       { ...externalAppMenu(externalAppKind), disabled: unavailable || kind === 'mixed' },
       {
+        label: String(localeMsg.value.menu.file.xmp_metadata || 'XMP Sidecar'),
+        children: [
+          {
+            label: String(localeMsg.value.menu.file.import_xmp || 'Import from XMP'),
+            disabled: unavailable || selectionCount === 0,
+            action: createAction('import-xmp'),
+          },
+          {
+            label: String(localeMsg.value.menu.file.export_xmp || 'Write to XMP'),
+            disabled: unavailable || selectionCount === 0,
+            action: createAction('export-xmp'),
+          },
+        ],
+      },
+      {
         label: localeMsg.value.menu.file.refresh_file_info,
         icon: markRaw(IconRefresh),
         disabled: unavailable || selectionCount === 0,
@@ -308,6 +323,19 @@ export const useFileMenuItems = (
         action: createAction('find-person')
       },
       { label: "-", action: null },
+      {
+        label: String(localeMsg.value.menu.file.xmp_metadata || 'XMP Sidecar'),
+        children: [
+          {
+            label: String(localeMsg.value.menu.file.import_xmp || 'Import from XMP'),
+            action: createAction('import-xmp'),
+          },
+          {
+            label: String(localeMsg.value.menu.file.export_xmp || 'Write to XMP'),
+            action: createAction('export-xmp'),
+          },
+        ],
+      },
       {
         label: localeMsg.value.menu.file.refresh_file_info,
         icon: markRaw(IconRefresh),

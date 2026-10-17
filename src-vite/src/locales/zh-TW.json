@@ -727,7 +727,12 @@
       "set_desktop_wallpaper": "設為桌面桌布",
       "show_info": "顯示資訊",
       "remove_from_collection": "從收藏移除",
-      "create_montage": "建立拼貼"
+      "create_montage": "建立拼貼",
+      "xmp_metadata": "XMP 附屬檔案",
+      "import_xmp": "從 XMP 匯入",
+      "export_xmp": "寫入至 XMP",
+      "xmp_import_success": "已從 {count} 個 XMP 檔案匯入元資料",
+      "xmp_export_success": "已將元資料寫入 {count} 個 XMP 檔案"
     },
     "calendar": {
       "monthly": "月",
@@ -1330,7 +1335,12 @@
       "source_embedded": "內嵌",
       "source_rendered": "算繪",
       "source_brightened": "提亮",
-      "preview_mode": "RAW 預覽模式"
+      "preview_mode": "RAW 預覽模式",
+      "section_xmp": "XMP 附屬檔案",
+      "xmp_import": "匯入 XMP 元資料",
+      "xmp_import_hint": "從 .xmp 檔案讀取評分、標籤、選片標記、備註和顏色標籤",
+      "xmp_sync": "雙向 XMP 同步",
+      "xmp_sync_hint": "自動將評分、標記、標籤和備註回寫至 .xmp 檔案"
     },
     "browse": {
       "section_album": "相簿資料夾",

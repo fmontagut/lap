@@ -2495,8 +2495,12 @@ pub(crate) fn delete_files_grouped(
 /// edit a file's comment
 #[tauri::command]
 pub fn edit_file_comment(file_id: i64, comment: &str) -> Result<usize, String> {
-    AFile::update_column(file_id, "comments", &comment)
-        .map_err(|e| format!("Error while editing file comment: {}", e))
+    let res = AFile::update_column(file_id, "comments", &comment)
+        .map_err(|e| format!("Error while editing file comment: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        let _ = crate::t_xmp::export_xmp_for_file(file_id);
+    }
+    Ok(res)
 }
 
 /// Remove unreferenced thumbnail cache files. When `library_id` is provided,
@@ -3017,16 +3021,24 @@ pub fn set_file_favorite(file_id: i64, is_favorite: bool) -> Result<usize, Strin
 #[tauri::command]
 pub fn set_file_rating(file_id: i64, rating: i32) -> Result<usize, String> {
     let clamped = rating.clamp(0, 5);
-    AFile::update_column(file_id, "rating", &clamped)
-        .map_err(|e| format!("Error while setting file rating: {}", e))
+    let res = AFile::update_column(file_id, "rating", &clamped)
+        .map_err(|e| format!("Error while setting file rating: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        let _ = crate::t_xmp::export_xmp_for_file(file_id);
+    }
+    Ok(res)
 }
 
 /// Set a file's culling status (0: unreviewed, 1: pick, 2: reject).
 #[tauri::command]
 pub fn set_file_culling_flag(file_id: i64, culling_flag: i32) -> Result<usize, String> {
     let clamped = culling_flag.clamp(0, 2);
-    AFile::update_column(file_id, "culling_flag", &clamped)
-        .map_err(|e| format!("Error while setting file culling flag: {}", e))
+    let res = AFile::update_column(file_id, "culling_flag", &clamped)
+        .map_err(|e| format!("Error while setting file culling flag: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        let _ = crate::t_xmp::export_xmp_for_file(file_id);
+    }
+    Ok(res)
 }
 
 #[derive(Debug, Deserialize)]
@@ -3042,7 +3054,8 @@ pub struct BatchFileMetadataUpdate {
 
 #[tauri::command]
 pub fn batch_update_file_metadata(params: BatchFileMetadataUpdate) -> Result<usize, String> {
-    AFile::batch_update_metadata(
+    let ids = params.file_ids.clone();
+    let res = AFile::batch_update_metadata(
         &params.file_ids,
         params.is_favorite,
         params.rating,
@@ -3050,7 +3063,72 @@ pub fn batch_update_file_metadata(params: BatchFileMetadataUpdate) -> Result<usi
         params.rotate_delta,
         params.comment.as_deref(),
     )
-    .map_err(|e| format!("Error while updating file metadata: {}", e))
+    .map_err(|e| format!("Error while updating file metadata: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        tauri::async_runtime::spawn_blocking(move || {
+            for id in ids {
+                let _ = crate::t_xmp::export_xmp_for_file(id);
+            }
+        });
+    }
+    Ok(res)
+}
+
+// XMP Sidecar Metadata commands
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XmpSyncSettings {
+    pub import_enabled: bool,
+    pub sync_enabled: bool,
+}
+
+#[tauri::command]
+pub fn get_xmp_sync_settings() -> XmpSyncSettings {
+    XmpSyncSettings {
+        import_enabled: crate::t_xmp::is_xmp_import_enabled(),
+        sync_enabled: crate::t_xmp::is_xmp_sync_enabled(),
+    }
+}
+
+#[tauri::command]
+pub fn set_xmp_sync_settings(import_enabled: bool, sync_enabled: bool) {
+    crate::t_xmp::set_xmp_import_enabled(import_enabled);
+    crate::t_xmp::set_xmp_sync_enabled(sync_enabled);
+}
+
+#[tauri::command]
+pub async fn import_xmp_metadata(file_ids: Vec<i64>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut imported = 0;
+        for file_id in file_ids {
+            if let Ok(Some(file)) = AFile::get_file_info(file_id) {
+                if let Some(ref path) = file.file_path {
+                    if let Ok(true) = crate::t_xmp::import_xmp_for_file(file_id, path) {
+                        imported += 1;
+                    }
+                }
+            }
+        }
+        Ok(imported)
+    })
+    .await
+    .map_err(|e| format!("XMP import failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn export_xmp_metadata(file_ids: Vec<i64>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut exported = 0;
+        for file_id in file_ids {
+            if crate::t_xmp::export_xmp_for_file(file_id).is_ok() {
+                exported += 1;
+            }
+        }
+        Ok(exported)
+    })
+    .await
+    .map_err(|e| format!("XMP export failed: {e}"))?
 }
 
 // tag
@@ -3132,15 +3210,23 @@ pub fn get_tags_for_file(file_id: i64) -> Result<Vec<ATag>, String> {
 /// add a tag to a file
 #[tauri::command]
 pub fn add_tag_to_file(file_id: i64, tag_id: i64) -> Result<(), String> {
-    ATag::add_tag_to_file(file_id, tag_id)
-        .map_err(|e| format!("Error while adding tag to file: {}", e))
+    let res = ATag::add_tag_to_file(file_id, tag_id)
+        .map_err(|e| format!("Error while adding tag to file: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        let _ = crate::t_xmp::export_xmp_for_file(file_id);
+    }
+    Ok(res)
 }
 
 /// remove a tag from a file
 #[tauri::command]
 pub fn remove_tag_from_file(file_id: i64, tag_id: i64) -> Result<usize, String> {
-    ATag::remove_tag_from_file(file_id, tag_id)
-        .map_err(|e| format!("Error while removing tag from file: {}", e))
+    let res = ATag::remove_tag_from_file(file_id, tag_id)
+        .map_err(|e| format!("Error while removing tag from file: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        let _ = crate::t_xmp::export_xmp_for_file(file_id);
+    }
+    Ok(res)
 }
 
 #[tauri::command]
@@ -3155,8 +3241,17 @@ pub fn apply_tags_to_files(
     add_tag_ids: Vec<i64>,
     remove_tag_ids: Vec<i64>,
 ) -> Result<Vec<ATagFileState>, String> {
-    ATag::apply_to_files(&file_ids, &add_tag_ids, &remove_tag_ids)
-        .map_err(|e| format!("Error while applying tags to files: {}", e))
+    let ids = file_ids.clone();
+    let res = ATag::apply_to_files(&file_ids, &add_tag_ids, &remove_tag_ids)
+        .map_err(|e| format!("Error while applying tags to files: {}", e))?;
+    if crate::t_xmp::is_xmp_sync_enabled() {
+        tauri::async_runtime::spawn_blocking(move || {
+            for id in ids {
+                let _ = crate::t_xmp::export_xmp_for_file(id);
+            }
+        });
+    }
+    Ok(res)
 }
 
 // calendar

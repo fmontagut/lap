@@ -1552,6 +1552,45 @@ export async function batchUpdateFileMetadata(params) {
   }
 }
 
+// xmp sidecars
+
+export async function getXmpSyncSettings() {
+  try {
+    return await invoke('get_xmp_sync_settings');
+  } catch (error) {
+    console.error('Failed to get XMP sync settings:', error);
+  }
+  return { importEnabled: true, syncEnabled: false };
+}
+
+export async function setXmpSyncSettings(importEnabled, syncEnabled) {
+  try {
+    await invoke('set_xmp_sync_settings', { importEnabled, syncEnabled });
+    return true;
+  } catch (error) {
+    console.error('Failed to set XMP sync settings:', error);
+  }
+  return false;
+}
+
+export async function importXmpMetadata(fileIds) {
+  try {
+    return await invoke('import_xmp_metadata', { fileIds });
+  } catch (error) {
+    console.error('Failed to import XMP metadata:', error);
+    throw error;
+  }
+}
+
+export async function exportXmpMetadata(fileIds) {
+  try {
+    return await invoke('export_xmp_metadata', { fileIds });
+  } catch (error) {
+    console.error('Failed to export XMP metadata:', error);
+    throw error;
+  }
+}
+
 // tags
 
 export async function getTagGroupName(id) {

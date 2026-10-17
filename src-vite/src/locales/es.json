@@ -727,7 +727,12 @@
       "set_desktop_wallpaper": "Establecer como fondo de escritorio",
       "show_info": "Ver info",
       "remove_from_collection": "Quitar de la colección",
-      "create_montage": "Crear collage"
+      "create_montage": "Crear collage",
+      "xmp_metadata": "Metadatos XMP",
+      "import_xmp": "Importar desde XMP",
+      "export_xmp": "Escribir en XMP",
+      "xmp_import_success": "Metadatos importados de {count} archivo(s) XMP",
+      "xmp_export_success": "Metadatos escritos en {count} archivo(s) XMP"
     },
     "calendar": {
       "monthly": "Mensual",
@@ -1330,7 +1335,12 @@
       "source_embedded": "Incrustada",
       "source_rendered": "Renderizada",
       "source_brightened": "Aclarada",
-      "preview_mode": "Modo de vista previa RAW"
+      "preview_mode": "Modo de vista previa RAW",
+      "section_xmp": "Archivos XMP",
+      "xmp_import": "Importar metadatos XMP",
+      "xmp_import_hint": "Leer valoraciones, etiquetas, selecciones/rechazos, comentarios y etiquetas de color de archivos .xmp",
+      "xmp_sync": "Sincronización bidireccional XMP",
+      "xmp_sync_hint": "Escribir automáticamente valoraciones, etiquetas y comentarios en los archivos .xmp asociados"
     },
     "browse": {
       "section_album": "Carpeta de álbum",

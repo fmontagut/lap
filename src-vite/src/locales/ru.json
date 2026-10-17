@@ -727,7 +727,12 @@
       "set_desktop_wallpaper": "Сделать обоями рабочего стола",
       "show_info": "Показать информацию",
       "remove_from_collection": "Удалить из коллекции",
-      "create_montage": "Создать коллаж"
+      "create_montage": "Создать коллаж",
+      "xmp_metadata": "XMP-файл",
+      "import_xmp": "Импортировать из XMP",
+      "export_xmp": "Записать в XMP",
+      "xmp_import_success": "Метаданные импортированы из {count} XMP-файла(ов)",
+      "xmp_export_success": "Метаданные записаны в {count} XMP-файла(ов)"
     },
     "calendar": {
       "monthly": "Месяц",
@@ -1330,7 +1335,12 @@
       "source_embedded": "Встроенный",
       "source_rendered": "Рендеринг",
       "source_brightened": "Осветлённая",
-      "preview_mode": "Режим предпросмотра RAW"
+      "preview_mode": "Режим предпросмотра RAW",
+      "section_xmp": "XMP-файлы",
+      "xmp_import": "Импорт метаданных XMP",
+      "xmp_import_hint": "Чтение рейтингов, тегов, флагов отбора, комментариев и цветовых меток из файлов .xmp",
+      "xmp_sync": "Двусторонняя синхронизация XMP",
+      "xmp_sync_hint": "Автоматически записывать рейтинги, флаги, теги и комментарии обратно в файлы .xmp"
     },
     "browse": {
       "section_album": "Папка альбома",

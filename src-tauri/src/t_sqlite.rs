@@ -2593,6 +2593,20 @@ impl AFile {
             && !t_image::is_heic_path(file_path)
             && !t_libraw::is_tiff_path(file_path);
 
+        let (xmp_rating, xmp_culling, xmp_comments) = if crate::t_xmp::is_xmp_import_enabled() {
+            if let Some(xmp_path) = crate::t_xmp::find_xmp_sidecar(Path::new(file_path)) {
+                if let Ok(meta) = crate::t_xmp::read_xmp_file(&xmp_path) {
+                    (meta.rating, meta.culling_flag, meta.description)
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            }
+        } else {
+            (None, None, None)
+        };
+
         let file = Self {
             id: None,
             folder_id,
@@ -2630,10 +2644,12 @@ impl AFile {
             duration: Some(duration as i64),
 
             is_favorite: None,
-            rating: Some(0),
-            culling_flag: Some(0),
+            rating: xmp_rating.map(|r| r.clamp(0, 5)).or(Some(0)),
+            culling_flag: xmp_culling.map(|c| c.clamp(0, 2)).or(Some(0)),
             rotate: None,
-            comments: t_ai_png::extract_comment(file_path),
+            comments: xmp_comments
+                .filter(|c| !c.trim().is_empty())
+                .or_else(|| t_ai_png::extract_comment(file_path)),
             has_tags: Some(false),
             has_faces: Some(0),
 
@@ -3787,6 +3803,26 @@ impl AFile {
                             file.comments = Some(comment);
                         }
                     }
+                    if crate::t_xmp::is_xmp_import_enabled() {
+                        if let Some(sidecar) = crate::t_xmp::find_xmp_sidecar(Path::new(file_path)) {
+                            let sidecar_mtime_ms = std::fs::metadata(&sidecar)
+                                .and_then(|m| m.modified())
+                                .ok()
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_millis() as i64)
+                                .unwrap_or(0);
+                            let prev_scan = file.last_scan_time.unwrap_or(0);
+                            if sidecar_mtime_ms > prev_scan {
+                                if let Ok(conn) = open_conn() {
+                                    if let Ok(true) = crate::t_xmp::import_xmp_for_file_with_conn(file_id, file_path, &conn) {
+                                        if let Ok(Some(refreshed)) = Self::get_file_info(file_id) {
+                                            file = refreshed;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             return Ok((file, 0));
@@ -3806,6 +3842,19 @@ impl AFile {
         }
 
         let new_file = Self::fetch(folder_id, file_path)?;
+        if let Some(ref file) = new_file {
+            if let Some(file_id) = file.id {
+                if crate::t_xmp::is_xmp_import_enabled() {
+                    if let Ok(conn) = open_conn() {
+                        if let Ok(true) = crate::t_xmp::import_xmp_for_file_with_conn(file_id, file_path, &conn) {
+                            if let Ok(Some(refreshed)) = Self::fetch(folder_id, file_path) {
+                                return Ok((refreshed, 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         new_file
             .map(|f| (f, 1))
             .ok_or_else(|| format!("Inserted file missing from DB: {}", file_path))
@@ -3903,6 +3952,10 @@ impl AFile {
 
         // update the file info
         Self::update(file_id, &new_file_info)?;
+
+        if crate::t_xmp::is_xmp_import_enabled() {
+            let _ = crate::t_xmp::import_xmp_for_file(file_id, file_path);
+        }
 
         Self::get_file_info(file_id)
     }
