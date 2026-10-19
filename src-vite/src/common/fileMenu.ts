@@ -120,6 +120,11 @@ export const useFileMenuItems = (
         disabled: unavailable || !options?.selectionHasCloudOnly?.value,
         action: createAction('index-cloud-files'),
       },
+      {
+        label: String(localeMsg.value.menu.file.import_xmp || 'Import from XMP'),
+        disabled: unavailable || selectionCount === 0,
+        action: createAction('import-xmp'),
+      },
     ];
   };
 
@@ -323,6 +328,10 @@ export const useFileMenuItems = (
         label: localeMsg.value.menu.file.refresh_file_info,
         icon: markRaw(IconRefresh),
         action: createAction('refresh-file-info')
+      },
+      {
+        label: String(localeMsg.value.menu.file.import_xmp || 'Import from XMP'),
+        action: createAction('import-xmp'),
       },
       {
         label: localeMsg.value.menu.file.set_as,

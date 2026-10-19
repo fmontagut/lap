@@ -207,6 +207,7 @@ export const useConfigStore = defineStore('configStore', {
         // Cluster threshold index: 0=Very High, 1=High, 2=Medium, 3=Low
         clusterThresholdIndex: 2, // Default: Medium
       },
+      importXmpSidecars: true,
     },
   }),
 

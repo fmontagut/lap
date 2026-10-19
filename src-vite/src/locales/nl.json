@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Instellen als bureaubladachtergrond",
       "show_info": "Info tonen",
       "remove_from_collection": "Uit collectie halen",
-      "create_montage": "Collage maken"
+      "create_montage": "Collage maken",
+      "import_xmp": "Importeren uit XMP",
+      "xmp_import_success": "Metadata geïmporteerd uit {count} XMP-sidecar(s)"
     },
     "calendar": {
       "monthly": "Per maand",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Ingesloten",
       "source_rendered": "Gerenderd",
       "source_brightened": "Helderder",
-      "preview_mode": "RAW-voorbeeldmodus"
+      "preview_mode": "RAW-voorbeeldmodus",
+      "section_xmp": "XMP-sidecars",
+      "xmp_import": "XMP-metadata importeren",
+      "xmp_import_hint": "Lees beoordelingen, tags, selectievlaggen en opmerkingen uit .xmp-sidecars"
     },
     "browse": {
       "section_album": "Albummap",

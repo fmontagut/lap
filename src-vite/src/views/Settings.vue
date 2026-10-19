@@ -344,6 +344,18 @@
               </select>
             </div>
           </div>
+          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+            <div class="flex items-center gap-2 text-base-content/30">
+              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.raw.section_xmp') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-3 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <label for="raw-xmp-import" class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <span>{{ $t('settings.raw.xmp_import') }}</span>
+                <span class="text-xs text-base-content/30">{{ $t('settings.raw.xmp_import_hint') }}</span>
+              </label>
+              <input id="raw-xmp-import" type="checkbox" class="toggle toggle-primary toggle-sm shrink-0" v-model="config.settings.importXmpSidecars" />
+            </div>
+          </div>
         </div>
 
         <!-- Search Tab -->

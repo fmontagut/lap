@@ -46,6 +46,16 @@ watch(
   }
 );
 
+watch(
+  () => config.settings.importXmpSidecars,
+  (importXmp) => {
+    void invoke('set_xmp_import_settings', {
+      importXmpSidecars: Boolean(importXmp ?? true),
+    }).catch(console.error);
+  },
+  { immediate: true }
+);
+
 onMounted(async () => {
   const win = getCurrentWebviewWindow();
   if (win.label === 'main') {

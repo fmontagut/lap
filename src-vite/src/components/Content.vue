@@ -783,7 +783,7 @@ import { getAlbum, getAllAlbums, recountAlbum, getQueryCountAndSum, getQueryTime
          updateFileInfo, refreshFileInfo, getSupportedFormatExtensions, importFile, importUrl, importFileBytes, getDragPayload, importClipboard, addFileToDb, checkFileExists, checkFileAccessibility, cancelIndexing as cancelIndexingApi, selectFolder, getFacesForFile, listenFaceIndexProgress,
          openFilesWithApp, getAppConfig, getIndexRecoveryInfo, clearIndexRecoveryInfo, setLastSelectedItemIndex,
          dedupDelete, getQueryFilePosition, getFolderSearchExcluded,
-         listCollections, createCollection, addFilesToCollection, removeFilesFromCollection, getFileCollections, getCollectionCountAndSum, getCollectionFiles, getCollectionGroupedQueryRows, getCollectionGroupFileIds, getCollectionQueryFileIds, fetchFolder, isDirectoryAccessible, checkAlbumAccessibility, addTagToFile } from '@/common/api';
+         listCollections, createCollection, addFilesToCollection, removeFilesFromCollection, getFileCollections, getCollectionCountAndSum, getCollectionFiles, getCollectionGroupedQueryRows, getCollectionGroupFileIds, getCollectionQueryFileIds, fetchFolder, isDirectoryAccessible, checkAlbumAccessibility, addTagToFile, importXmpMetadata } from '@/common/api';
 import { config, libConfig } from '@/common/config';
 import {
   gridSizeFromPosition,
@@ -4361,6 +4361,28 @@ function handleItemAction(payload: { action: string, index: number }) {
     'reveal': () => revealPath(fileList.value[selectedItemIndex.value].file_path),
     'refresh-file-info': () => selectMode.value ? startSelectedFileRefresh() : void updateFile(fileList.value[selectedItemIndex.value], true),
     'index-cloud-files': () => startSelectedFileRefresh(true),
+    'import-xmp': async () => {
+      const ids = selectMode.value
+        ? Array.from(selectedFileIds)
+        : [fileList.value[selectedItemIndex.value]?.id].filter(Boolean);
+      if (!ids.length) return;
+      const count = await importXmpMetadata(ids);
+      if (count > 0) {
+        const refreshed = await getFilesByIds(ids);
+        if (Array.isArray(refreshed)) {
+          const map = new Map(refreshed.map((r: any) => [Number(r.id), r]));
+          for (let i = 0; i < fileList.value.length; i++) {
+            const item = fileList.value[i];
+            if (item && map.has(Number(item.id))) {
+              Object.assign(item, map.get(Number(item.id)));
+            }
+          }
+        }
+        fileInfoRevision.value++;
+        await tauriEmit('tags-changed');
+      }
+      toast.info(t('menu.file.xmp_import_success', { count: count || 0 }));
+    },
     'favorite': toggleFavorite,
     'rotate': clickRotate,
     'info': toggleInfoPanel,

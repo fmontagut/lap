@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Beállítás háttérképként",
       "show_info": "Adatok megjelenítése",
       "remove_from_collection": "Eltávolítás a gyűjteményből",
-      "create_montage": "Kollázs készítése"
+      "create_montage": "Kollázs készítése",
+      "import_xmp": "Importálás XMP-ből",
+      "xmp_import_success": "Metaadatok importálva {count} XMP mellékfájlból"
     },
     "calendar": {
       "monthly": "Havi",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Beágyazott",
       "source_rendered": "Feldolgozott",
       "source_brightened": "Felderített",
-      "preview_mode": "RAW-előnézet módja"
+      "preview_mode": "RAW-előnézet módja",
+      "section_xmp": "XMP mellékfájlok",
+      "xmp_import": "XMP metaadatok importálása",
+      "xmp_import_hint": "Értékelések, címkék, jelölők és megjegyzések beolvasása .xmp fájlokból"
     },
     "browse": {
       "section_album": "Albummappa",

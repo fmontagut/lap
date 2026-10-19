@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Définir comme fond d'écran",
       "show_info": "Afficher info",
       "remove_from_collection": "Retirer de la collection",
-      "create_montage": "Créer un collage"
+      "create_montage": "Créer un collage",
+      "import_xmp": "Importer depuis XMP",
+      "xmp_import_success": "Métadonnées importées depuis {count} fichier(s) XMP"
     },
     "calendar": {
       "monthly": "Mensuel",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Intégré",
       "source_rendered": "Rendu",
       "source_brightened": "Éclaircie",
-      "preview_mode": "Mode d'aperçu RAW"
+      "preview_mode": "Mode d'aperçu RAW",
+      "section_xmp": "Fichiers annexes XMP",
+      "xmp_import": "Importer les métadonnées XMP",
+      "xmp_import_hint": "Lire les notes, mots-clés, drapeaux de tri et commentaires depuis les fichiers .xmp"
     },
     "browse": {
       "section_album": "Dossier d'album",

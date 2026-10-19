@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Зробити шпалерами стільниці",
       "show_info": "Показати відомості",
       "remove_from_collection": "Вилучити з добірки",
-      "create_montage": "Створити колаж"
+      "create_montage": "Створити колаж",
+      "import_xmp": "Імпортувати з XMP",
+      "xmp_import_success": "Метадані імпортовано з {count} XMP-файлу(ів)"
     },
     "calendar": {
       "monthly": "Помісячно",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Вбудований",
       "source_rendered": "Оброблений",
       "source_brightened": "Освітлений",
-      "preview_mode": "Режим попереднього перегляду RAW"
+      "preview_mode": "Режим попереднього перегляду RAW",
+      "section_xmp": "XMP-файли",
+      "xmp_import": "Імпорт метаданих XMP",
+      "xmp_import_hint": "Читати рейтинги, теги, прапорці вибору та коментарі з файлів .xmp"
     },
     "browse": {
       "section_album": "Папка альбому",

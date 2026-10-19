@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Set as desktop wallpaper",
       "show_info": "Show info",
       "remove_from_collection": "Remove from Collection",
-      "create_montage": "Create collage"
+      "create_montage": "Create collage",
+      "import_xmp": "Import from XMP",
+      "xmp_import_success": "Imported metadata from {count} XMP sidecar(s)"
     },
     "calendar": {
       "monthly": "Monthly",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Embedded",
       "source_rendered": "Rendered",
       "source_brightened": "Brightened",
-      "preview_mode": "RAW preview mode"
+      "preview_mode": "RAW preview mode",
+      "section_xmp": "XMP Sidecars",
+      "xmp_import": "Import XMP Metadata",
+      "xmp_import_hint": "Read ratings, tags, culling flags, and comments from .xmp sidecars"
     },
     "browse": {
       "section_album": "Album folder",

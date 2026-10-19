@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Imposta come sfondo del desktop",
       "show_info": "Mostra informazioni",
       "remove_from_collection": "Rimuovi dalla raccolta",
-      "create_montage": "Crea collage"
+      "create_montage": "Crea collage",
+      "import_xmp": "Importa da XMP",
+      "xmp_import_success": "Metadati importati da {count} file sidecar XMP"
     },
     "calendar": {
       "monthly": "Mensile",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Incorporata",
       "source_rendered": "Elaborata",
       "source_brightened": "Schiarita",
-      "preview_mode": "Modalità anteprima RAW"
+      "preview_mode": "Modalità anteprima RAW",
+      "section_xmp": "Sidecar XMP",
+      "xmp_import": "Importa metadati XMP",
+      "xmp_import_hint": "Leggi valutazioni, tag, flag di selezione e commenti dai sidecar .xmp"
     },
     "browse": {
       "section_album": "Cartella album",

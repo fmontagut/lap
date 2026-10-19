@@ -3916,6 +3916,7 @@ impl AFile {
                 // Not modified and thumb exists, but we still need to update last_scan_time
                 // for the mark-and-sweep deletion logic.
                 if let Some(file_id) = file.id {
+                    let prev_scan = file.last_scan_time.unwrap_or(0);
                     let _ = Self::update_column(file_id, "last_scan_time", &last_scan_time);
                     if file
                         .comments
@@ -3925,6 +3926,23 @@ impl AFile {
                         if let Some(comment) = t_ai_png::extract_comment(file_path) {
                             let _ = Self::update_column(file_id, "comments", &comment);
                             file.comments = Some(comment);
+                        }
+                    }
+                    if crate::t_xmp::is_xmp_import_enabled()
+                        && crate::t_xmp::find_newer_xmp_sidecar(Path::new(file_path), prev_scan)
+                            .is_some()
+                    {
+                        if let Ok(conn) = open_conn() {
+                            if let Ok(true) = crate::t_xmp::import_xmp_for_file_with_conn(
+                                file_id,
+                                file_path,
+                                &conn,
+                                crate::t_xmp::XmpImportMode::RescanNonDestructive,
+                            ) {
+                                if let Ok(Some(refreshed)) = Self::get_file_info(file_id) {
+                                    file = refreshed;
+                                }
+                            }
                         }
                     }
                 }
@@ -3946,6 +3964,24 @@ impl AFile {
         }
 
         let new_file = Self::fetch(folder_id, file_path)?;
+        if let Some(ref file) = new_file {
+            if let Some(file_id) = file.id {
+                if crate::t_xmp::is_xmp_import_enabled() {
+                    if let Ok(conn) = open_conn() {
+                        if let Ok(true) = crate::t_xmp::import_xmp_for_file_with_conn(
+                            file_id,
+                            file_path,
+                            &conn,
+                            crate::t_xmp::XmpImportMode::InitialScan,
+                        ) {
+                            if let Ok(Some(refreshed)) = Self::fetch(folder_id, file_path) {
+                                return Ok((refreshed, 1));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         new_file
             .map(|f| (f, 1))
             .ok_or_else(|| format!("Inserted file missing from DB: {}", file_path))
@@ -4043,6 +4079,17 @@ impl AFile {
 
         // update the file info
         Self::update(file_id, &new_file_info)?;
+
+        let prev_scan = old_file_info.last_scan_time.unwrap_or(0);
+        if crate::t_xmp::is_xmp_import_enabled()
+            && crate::t_xmp::find_newer_xmp_sidecar(Path::new(file_path), prev_scan).is_some()
+        {
+            let _ = crate::t_xmp::import_xmp_for_file_with_mode(
+                file_id,
+                file_path,
+                crate::t_xmp::XmpImportMode::RescanNonDestructive,
+            );
+        }
 
         Self::get_file_info(file_id)
     }

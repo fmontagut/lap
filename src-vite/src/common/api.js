@@ -2208,3 +2208,31 @@ export async function getPersonThumbnail(personId) {
 export async function listAlbumSubfolders(path) {
   return invoke('list_album_subfolders', { path });
 }
+
+// xmp sidecars
+export async function getXmpImportSettings() {
+  try {
+    return await invoke('get_xmp_import_settings');
+  } catch (error) {
+    console.error('Failed to get XMP import settings:', error);
+    return null;
+  }
+}
+
+export async function setXmpImportSettings(importXmpSidecars) {
+  try {
+    await invoke('set_xmp_import_settings', { importXmpSidecars });
+  } catch (error) {
+    console.error('Failed to set XMP import settings:', error);
+  }
+}
+
+export async function importXmpMetadata(fileIds) {
+  try {
+    return await invoke('import_xmp_metadata', { fileIds });
+  } catch (error) {
+    console.error('Failed to import XMP metadata:', error);
+    return 0;
+  }
+}
+

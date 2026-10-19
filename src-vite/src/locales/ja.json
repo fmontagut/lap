@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "デスクトップの壁紙に設定",
       "show_info": "情報を表示",
       "remove_from_collection": "コレクションから削除",
-      "create_montage": "コラージュを作成"
+      "create_montage": "コラージュを作成",
+      "import_xmp": "XMP からインポート",
+      "xmp_import_success": "{count} 件の XMP サイドカーからメタデータをインポートしました"
     },
     "calendar": {
       "monthly": "月別",
@@ -1360,7 +1362,10 @@
       "source_embedded": "埋め込み",
       "source_rendered": "レンダリング",
       "source_brightened": "明るめ",
-      "preview_mode": "RAW プレビューモード"
+      "preview_mode": "RAW プレビューモード",
+      "section_xmp": "XMP サイドカー",
+      "xmp_import": "XMP メタデータのインポート",
+      "xmp_import_hint": ".xmp サイドカーからレーティング、タグ、選別フラグ、コメントを読み込みます"
     },
     "browse": {
       "section_album": "アルバムフォルダ",

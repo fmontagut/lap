@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "Ustaw jako tapetę pulpitu",
       "show_info": "Pokaż informacje",
       "remove_from_collection": "Usuń z kolekcji",
-      "create_montage": "Utwórz kolaż"
+      "create_montage": "Utwórz kolaż",
+      "import_xmp": "Importuj z XMP",
+      "xmp_import_success": "Zaimportowano metadane z {count} plików XMP"
     },
     "calendar": {
       "monthly": "Miesięcznie",
@@ -1360,7 +1362,10 @@
       "source_embedded": "Osadzony",
       "source_rendered": "Renderowany",
       "source_brightened": "Rozjaśniona",
-      "preview_mode": "Tryb podglądu RAW"
+      "preview_mode": "Tryb podglądu RAW",
+      "section_xmp": "Pliki pomocnicze XMP",
+      "xmp_import": "Importuj metadane XMP",
+      "xmp_import_hint": "Odczytuj oceny, tagi, flagi selekcji i komentarze z plików .xmp"
     },
     "browse": {
       "section_album": "Folder albumu",

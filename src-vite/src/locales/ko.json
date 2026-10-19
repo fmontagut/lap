@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "바탕 화면 배경으로 설정",
       "show_info": "정보 보기",
       "remove_from_collection": "컬렉션에서 제거",
-      "create_montage": "콜라주 만들기"
+      "create_montage": "콜라주 만들기",
+      "import_xmp": "XMP에서 가져오기",
+      "xmp_import_success": "{count}개의 XMP 사이드카에서 메타데이터를 가져왔습니다"
     },
     "calendar": {
       "monthly": "월별",
@@ -1360,7 +1362,10 @@
       "source_embedded": "내장",
       "source_rendered": "렌더링",
       "source_brightened": "밝게",
-      "preview_mode": "RAW 미리보기 모드"
+      "preview_mode": "RAW 미리보기 모드",
+      "section_xmp": "XMP 사이드카",
+      "xmp_import": "XMP 메타데이터 가져오기",
+      "xmp_import_hint": ".xmp 사이드카에서 등급, 태그, 선택 플래그 및 설명을 읽습니다"
     },
     "browse": {
       "section_album": "앨범 폴더",

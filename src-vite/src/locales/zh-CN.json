@@ -739,7 +739,9 @@
       "set_desktop_wallpaper": "设为桌面壁纸",
       "show_info": "显示信息",
       "remove_from_collection": "从合集移除",
-      "create_montage": "创建拼图"
+      "create_montage": "创建拼图",
+      "import_xmp": "从 XMP 导入",
+      "xmp_import_success": "已从 {count} 个 XMP 文件导入元数据"
     },
     "calendar": {
       "monthly": "按月",
@@ -1360,7 +1362,10 @@
       "source_embedded": "内嵌",
       "source_rendered": "渲染",
       "source_brightened": "提亮",
-      "preview_mode": "RAW 预览方式"
+      "preview_mode": "RAW 预览方式",
+      "section_xmp": "XMP 附属文件",
+      "xmp_import": "导入 XMP 元数据",
+      "xmp_import_hint": "从 .xmp 文件读取评分、标签、选片标记和备注"
     },
     "browse": {
       "section_album": "相册文件夹",
