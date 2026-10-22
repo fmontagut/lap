@@ -4366,22 +4366,33 @@ function handleItemAction(payload: { action: string, index: number }) {
         ? Array.from(selectedFileIds)
         : [fileList.value[selectedItemIndex.value]?.id].filter(Boolean);
       if (!ids.length) return;
-      const count = await importXmpMetadata(ids);
-      if (count > 0) {
-        const refreshed = await getFilesByIds(ids);
-        if (Array.isArray(refreshed)) {
-          const map = new Map(refreshed.map((r: any) => [Number(r.id), r]));
-          for (let i = 0; i < fileList.value.length; i++) {
-            const item = fileList.value[i];
-            if (item && map.has(Number(item.id))) {
-              Object.assign(item, map.get(Number(item.id)));
+      try {
+        const result = await importXmpMetadata(ids);
+        const importedIds = result.importedIds;
+        const count = importedIds.length;
+        if (count > 0) {
+          const refreshed = await getFilesByIds(importedIds);
+          if (Array.isArray(refreshed)) {
+            const map = new Map(refreshed.map((r: any) => [Number(r.id), r]));
+            for (let i = 0; i < fileList.value.length; i++) {
+              const item = fileList.value[i];
+              if (item && map.has(Number(item.id))) {
+                Object.assign(item, map.get(Number(item.id)));
+              }
             }
           }
+          fileInfoRevision.value++;
+          await tauriEmit('tags-changed');
         }
-        fileInfoRevision.value++;
-        await tauriEmit('tags-changed');
+        toast.info(t('menu.file.xmp_import_success', { count }));
+        if (result.failures.length > 0) {
+          console.error('XMP import failures:', result.failures);
+          toast.error(t('menu.file.xmp_import_failed', { count: result.failures.length }));
+        }
+      } catch (error) {
+        console.error('XMP import failed:', error);
+        toast.error(String(error));
       }
-      toast.info(t('menu.file.xmp_import_success', { count: count || 0 }));
     },
     'favorite': toggleFavorite,
     'rotate': clickRotate,

@@ -741,7 +741,8 @@
       "remove_from_collection": "Retirer de la collection",
       "create_montage": "Créer un collage",
       "import_xmp": "Importer depuis XMP",
-      "xmp_import_success": "Métadonnées importées depuis {count} fichier(s) XMP"
+      "xmp_import_success": "Métadonnées importées depuis {count} fichier(s) XMP",
+      "xmp_import_failed": "Échec de l’import XMP pour {count} fichier(s)"
     },
     "calendar": {
       "monthly": "Mensuel",

@@ -741,7 +741,8 @@
       "remove_from_collection": "Удалить из коллекции",
       "create_montage": "Создать коллаж",
       "import_xmp": "Импортировать из XMP",
-      "xmp_import_success": "Метаданные импортированы из {count} XMP-файла(ов)"
+      "xmp_import_success": "Метаданные импортированы из {count} XMP-файла(ов)",
+      "xmp_import_failed": "Не удалось импортировать XMP для {count} файлов"
     },
     "calendar": {
       "monthly": "Месяц",

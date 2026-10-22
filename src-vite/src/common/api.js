@@ -2232,7 +2232,7 @@ export async function importXmpMetadata(fileIds) {
     return await invoke('import_xmp_metadata', { fileIds });
   } catch (error) {
     console.error('Failed to import XMP metadata:', error);
-    return 0;
+    throw error;
   }
 }
 

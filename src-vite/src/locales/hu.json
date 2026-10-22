@@ -741,7 +741,8 @@
       "remove_from_collection": "Eltávolítás a gyűjteményből",
       "create_montage": "Kollázs készítése",
       "import_xmp": "Importálás XMP-ből",
-      "xmp_import_success": "Metaadatok importálva {count} XMP mellékfájlból"
+      "xmp_import_success": "Metaadatok importálva {count} XMP mellékfájlból",
+      "xmp_import_failed": "Az XMP importálása sikertelen {count} fájlnál"
     },
     "calendar": {
       "monthly": "Havi",

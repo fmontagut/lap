@@ -741,7 +741,8 @@
       "remove_from_collection": "從收藏移除",
       "create_montage": "建立拼貼",
       "import_xmp": "從 XMP 匯入",
-      "xmp_import_success": "已從 {count} 個 XMP 檔案匯入元資料"
+      "xmp_import_success": "已從 {count} 個 XMP 檔案匯入元資料",
+      "xmp_import_failed": "{count} 個檔案的 XMP 匯入失敗"
     },
     "calendar": {
       "monthly": "月",

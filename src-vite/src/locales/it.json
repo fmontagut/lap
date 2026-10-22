@@ -741,7 +741,8 @@
       "remove_from_collection": "Rimuovi dalla raccolta",
       "create_montage": "Crea collage",
       "import_xmp": "Importa da XMP",
-      "xmp_import_success": "Metadati importati da {count} file sidecar XMP"
+      "xmp_import_success": "Metadati importati da {count} file sidecar XMP",
+      "xmp_import_failed": "Importazione XMP non riuscita per {count} file"
     },
     "calendar": {
       "monthly": "Mensile",

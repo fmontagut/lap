@@ -741,7 +741,8 @@
       "remove_from_collection": "从合集移除",
       "create_montage": "创建拼图",
       "import_xmp": "从 XMP 导入",
-      "xmp_import_success": "已从 {count} 个 XMP 文件导入元数据"
+      "xmp_import_success": "已从 {count} 个 XMP 文件导入元数据",
+      "xmp_import_failed": "{count} 个文件的 XMP 导入失败"
     },
     "calendar": {
       "monthly": "按月",

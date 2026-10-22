@@ -741,7 +741,8 @@
       "remove_from_collection": "Вилучити з добірки",
       "create_montage": "Створити колаж",
       "import_xmp": "Імпортувати з XMP",
-      "xmp_import_success": "Метадані імпортовано з {count} XMP-файлу(ів)"
+      "xmp_import_success": "Метадані імпортовано з {count} XMP-файлу(ів)",
+      "xmp_import_failed": "Не вдалося імпортувати XMP для {count} файлів"
     },
     "calendar": {
       "monthly": "Помісячно",

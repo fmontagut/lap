@@ -741,7 +741,8 @@
       "remove_from_collection": "コレクションから削除",
       "create_montage": "コラージュを作成",
       "import_xmp": "XMP からインポート",
-      "xmp_import_success": "{count} 件の XMP サイドカーからメタデータをインポートしました"
+      "xmp_import_success": "{count} 件の XMP サイドカーからメタデータをインポートしました",
+      "xmp_import_failed": "{count} 件の XMP インポートに失敗しました"
     },
     "calendar": {
       "monthly": "月別",

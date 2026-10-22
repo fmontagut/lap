@@ -13,12 +13,12 @@
 //! | `atags` / `afile_tags` | `http://purl.org/dc/elements/1.1/`<br>`http://ns.adobe.com/lightroom/1.0/`<br>`http://www.digikam.org/ns/1.0/` | `dc:subject` (`rdf:Bag`)<br>`lr:hierarchicalSubject` (`rdf:Bag`)<br>`digiKam:TagsList` (`rdf:Seq`) | Deduplicated union preserving order; internal `darktable\|*` system tags excluded; empty container → `Some(vec![])`; missing → `None` |
 //! | `afiles.comments` | `http://purl.org/dc/elements/1.1/`<br>`http://ns.adobe.com/exif/1.0/`<br>`http://ns.adobe.com/photoshop/1.0/` | `dc:description` (`rdf:Alt`)<br>`exif:UserComment` (`rdf:Alt`)<br>`photoshop:Caption` | Priority: `dc:description` (`xml:lang="x-default"` preferred) → `exif:UserComment` → `photoshop:Caption`; empty element/attr → `Some("")`; missing → `None` |
 
+use rusqlite::{Connection, params};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
 
 use crate::t_sqlite::open_conn;
 
@@ -78,8 +78,8 @@ pub enum XmpImportMode {
     /// Populates all present non-empty fields from the sidecar.
     InitialScan,
     /// Used during folder rescans or `update_file_info` when a file already exists in `afiles`.
-    /// Never overwrites local edits in Lap: only populates `rating`, `culling_flag`, or `comments`
-    /// if they are currently unset (`0` or empty) in the database, and merges tags additively.
+    /// Fills empty fields and merges tags only when the corresponding field has
+    /// not been edited locally. Explicit local clears are protected as well.
     RescanNonDestructive,
     /// Used when the user explicitly selects "Import from XMP" from the context menu.
     /// Applies all `Some(...)` fields from the sidecar (including `Some(0)` or `Some("")` to clear),
@@ -87,224 +87,191 @@ pub enum XmpImportMode {
     ManualOverwrite,
 }
 
-/// Discovers an existing XMP sidecar for a given image file path.
-///
-/// Priority order:
-/// 1. `<filename>.<ext>.xmp` / `<filename>.<ext>.XMP` (darktable / Exiv2 convention, e.g. `DSC0001.RAF.xmp`)
-/// 2. `<stem>.xmp` / `<stem>.XMP` (Lightroom / Camera Raw convention, e.g. `DSC0001.xmp`)
-/// 3. Case-insensitive fallback scan in the parent directory for filesystems where
-///    mixed-case extensions such as `.Xmp` exist.
+const MAX_XMP_BYTES: usize = 16 * 1024 * 1024;
+const MAX_XML_DEPTH: usize = 64;
+const MAX_XML_NODES: usize = 100_000;
+const MAX_XML_EXPANDED_BYTES: usize = 32 * 1024 * 1024;
+
+type SidecarIndex = (i64, PathBuf, HashMap<String, PathBuf>);
+thread_local! {
+    static SCAN: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+    static INDEX: std::cell::RefCell<Option<SidecarIndex>> = const { std::cell::RefCell::new(None) };
+}
+pub struct SidecarScan(Option<i64>);
+impl Drop for SidecarScan {
+    fn drop(&mut self) {
+        SCAN.with(|scan| scan.set(self.0));
+    }
+}
+/// Reuse an index only within this scan's timestamp, never across scan generations.
+pub fn sidecar_scan(generation: i64) -> SidecarScan {
+    SidecarScan(SCAN.with(|scan| scan.replace(Some(generation))))
+}
+
+/// The photo name is case-sensitive; only the sidecar extension is folded.
+/// Duplicate extension spellings are resolved deterministically.
 pub fn find_xmp_sidecar(image_path: &Path) -> Option<PathBuf> {
     let parent = image_path.parent().unwrap_or(Path::new("."));
     let file_name = image_path.file_name()?.to_str()?;
     let stem = image_path.file_stem()?.to_str()?;
-
-    // 1. Exact checks for <filename>.<ext>.xmp / .XMP (highest priority)
-    let candidate_ext_xmp = parent.join(format!("{}.xmp", file_name));
-    if candidate_ext_xmp.is_file() {
-        return Some(candidate_ext_xmp);
-    }
-    let candidate_ext_xmp_upper = parent.join(format!("{}.XMP", file_name));
-    if candidate_ext_xmp_upper.is_file() {
-        return Some(candidate_ext_xmp_upper);
-    }
-
-    // 2. Exact checks for <stem>.xmp / .XMP
-    let candidate_stem_xmp = parent.join(format!("{}.xmp", stem));
-    if candidate_stem_xmp.is_file() {
-        return Some(candidate_stem_xmp);
-    }
-    let candidate_stem_xmp_upper = parent.join(format!("{}.XMP", stem));
-    if candidate_stem_xmp_upper.is_file() {
-        return Some(candidate_stem_xmp_upper);
-    }
-
-    // 3. Case-insensitive directory fallback (e.g. .Xmp on case-sensitive Linux/macOS APFS)
-    if let Ok(entries) = fs::read_dir(parent) {
-        let target_ext_name = format!("{}.xmp", file_name);
-        let target_stem_name = format!("{}.xmp", stem);
-        let mut stem_match: Option<PathBuf> = None;
-
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.eq_ignore_ascii_case(&target_ext_name) && entry.path().is_file() {
-                    return Some(entry.path());
-                }
-                if stem_match.is_none()
-                    && name.eq_ignore_ascii_case(&target_stem_name)
-                    && entry.path().is_file()
+    INDEX.with(|cache| {
+        let generation = SCAN.with(|scan| scan.get());
+        let mut cache = cache.borrow_mut();
+        if generation.is_none()
+            || cache
+                .as_ref()
+                .is_none_or(|(scan, dir, _)| Some(*scan) != generation || dir != parent)
+        {
+            let mut names = HashMap::<String, PathBuf>::new();
+            for entry in fs::read_dir(parent).ok()?.flatten() {
+                let path = entry.path();
+                if path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("xmp"))
+                    && path.is_file()
                 {
-                    stem_match = Some(entry.path());
+                    let name = path.file_stem()?.to_str()?.to_string();
+                    let chosen = names.entry(name).or_insert_with(|| path.clone());
+                    if path < *chosen {
+                        *chosen = path;
+                    }
                 }
             }
+            *cache = Some((generation.unwrap_or(0), parent.to_path_buf(), names));
         }
-        if stem_match.is_some() {
-            return stem_match;
-        }
-    }
-
-    None
+        let names = &cache.as_ref()?.2;
+        names.get(file_name).or_else(|| names.get(stem)).cloned()
+    })
 }
 
-/// Returns `Some(sidecar_path)` if an XMP sidecar exists and its modification timestamp
-/// (in milliseconds since UNIX_EPOCH) is strictly newer than `prev_scan_time_ms`.
-pub fn find_newer_xmp_sidecar(image_path: &Path, prev_scan_time_ms: i64) -> Option<PathBuf> {
-    let sidecar = find_xmp_sidecar(image_path)?;
-    let sidecar_mtime_ms = fs::metadata(&sidecar)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    if should_import_xmp_on_rescan(sidecar_mtime_ms, prev_scan_time_ms) {
-        Some(sidecar)
-    } else {
-        None
-    }
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XmpBatchResult {
+    pub imported_ids: Vec<i64>,
+    pub skipped_ids: Vec<i64>,
+    pub failures: Vec<XmpImportFailure>,
 }
-
-/// Pure helper determining whether a sidecar with `sidecar_mtime_ms` should be
-/// re-evaluated during a rescan of a file last scanned at `prev_scan_time_ms`.
-#[inline]
-pub fn should_import_xmp_on_rescan(sidecar_mtime_ms: i64, prev_scan_time_ms: i64) -> bool {
-    sidecar_mtime_ms > 0 && sidecar_mtime_ms > prev_scan_time_ms
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XmpImportFailure {
+    pub file_id: i64,
+    pub path: String,
+    pub error: String,
+}
+pub fn import_batch(files: &[(i64, String)], conn: &Connection) -> XmpBatchResult {
+    static GENERATION: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+    let _scan = sidecar_scan(GENERATION.fetch_sub(1, Ordering::Relaxed));
+    let mut result = XmpBatchResult::default();
+    for (id, path) in files {
+        match import_xmp_for_file_with_conn(*id, path, conn, XmpImportMode::ManualOverwrite) {
+            Ok(true) => result.imported_ids.push(*id),
+            Ok(false) => result.skipped_ids.push(*id),
+            Err(error) => result.failures.push(XmpImportFailure {
+                file_id: *id,
+                path: path.clone(),
+                error,
+            }),
+        }
+    }
+    result
 }
 
 /// Reads and parses an XMP sidecar file, skipping cloud-only (unhydrated) placeholders.
 pub fn read_xmp_file(path: &Path) -> Result<XmpMetadata, String> {
     if let Ok(meta) = fs::metadata(path) {
         if crate::t_utils::is_cloud_only(&meta) {
-            return Err(format!("Skipping cloud-only XMP sidecar '{}'", path.display()));
+            return Err(format!(
+                "Skipping cloud-only XMP sidecar '{}'",
+                path.display()
+            ));
         }
     }
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read XMP file '{}': {}", path.display(), e))?;
-    Ok(parse_xmp_str(&content))
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut content = String::new();
+    file.take(MAX_XMP_BYTES as u64 + 1)
+        .read_to_string(&mut content)
+        .map_err(|e| e.to_string())?;
+    if content.len() > MAX_XMP_BYTES {
+        return Err("XMP exceeds 16 MiB size limit".into());
+    }
+    parse_xmp_str(&content)
 }
 
-/// Parses XMP XML content into structured metadata using namespace-aware resolution.
-pub fn parse_xmp_str(content: &str) -> XmpMetadata {
+/// Parse the complete XML document before exposing any metadata to the importer.
+pub fn parse_xmp_str(content: &str) -> Result<XmpMetadata, String> {
+    let root = parse_xml(content)?;
+    let mut properties = Vec::new();
+    collect_properties(&root, &mut properties);
+    let value = |uri: &str, name: &str| {
+        properties
+            .iter()
+            .find(|node| node.uri == uri && node.name == name)
+            .map(|n| n.value())
+    };
     let mut meta = XmpMetadata::default();
-    let ns = XmpNamespaces::parse(content);
-
-    let xmp_prefixes = ns.prefixes_for(NS_XMP, &["xmp", "xap"]);
-    let xmp_dm_prefixes = ns.prefixes_for(NS_XMP_DM, &["xmpDM"]);
-    let dt_prefixes = ns.prefixes_for(NS_DARKTABLE, &["darktable"]);
-    let dc_prefixes = ns.prefixes_for(NS_DC, &["dc"]);
-    let lr_prefixes = ns.prefixes_for(NS_LR, &["lr"]);
-    let digikam_prefixes = ns.prefixes_for(NS_DIGIKAM, &["digiKam"]);
-    let exif_prefixes = ns.prefixes_for(NS_EXIF, &["exif"]);
-    let photoshop_prefixes = ns.prefixes_for(NS_PHOTOSHOP, &["photoshop"]);
-    let rdf_prefixes = ns.prefixes_for(NS_RDF, &["rdf"]);
-
-    // 1. Rating (xmp:Rating / xap:Rating)
-    let mut rating_rejected = false;
-    if let Some(rating_val) = extract_ns_attribute(content, &xmp_prefixes, "Rating")
-        .or_else(|| extract_ns_tag_value(content, &xmp_prefixes, "Rating"))
-    {
-        let trimmed = rating_val.trim();
-        if trimmed.is_empty() {
+    let mut rejected = false;
+    if let Some(v) = value(NS_XMP, "Rating") {
+        if v.trim().is_empty() {
             meta.rating = Some(0);
-        } else if let Ok(num) = trimmed.parse::<i32>() {
-            if num < 0 {
-                rating_rejected = true;
-                meta.rating = Some(0);
-            } else {
-                meta.rating = Some(num.clamp(0, 5));
+        } else if let Ok(n) = v.trim().parse::<i32>() {
+            if (-1..=5).contains(&n) {
+                meta.rating = Some(n.max(0));
+                rejected = n == -1;
             }
         }
     }
-
-    // 2. Culling / Pick / Reject flags
-    // Priority: explicit xmpDM:pick -> darktable:rejected -> xmp:Label (Pick/Reject) -> xmp:Rating="-1"
-    if let Some(pick_val) = extract_ns_attribute(content, &xmp_dm_prefixes, "pick")
-        .or_else(|| extract_ns_tag_value(content, &xmp_dm_prefixes, "pick"))
-    {
-        let trimmed = pick_val.trim();
-        if trimmed.is_empty() || trimmed == "0" {
-            meta.culling_flag = Some(0);
-        } else if let Ok(num) = trimmed.parse::<i32>() {
-            if num > 0 {
-                meta.culling_flag = Some(1);
-            } else if num < 0 {
-                meta.culling_flag = Some(2);
-            }
-        }
-    }
-
-    if let Some(rej_val) = extract_ns_attribute(content, &dt_prefixes, "rejected")
-        .or_else(|| extract_ns_tag_value(content, &dt_prefixes, "rejected"))
-    {
-        match rej_val.trim() {
-            "1" | "true" => meta.culling_flag = Some(2),
-            "0" | "false" | "" => {
-                if meta.culling_flag.is_none() {
-                    meta.culling_flag = Some(0);
+    meta.culling_flag = value(NS_XMP_DM, "pick")
+        .and_then(|v| match v.trim() {
+            "1" => Some(1),
+            "-1" => Some(2),
+            "0" | "" => Some(0),
+            _ => None,
+        })
+        .or_else(|| {
+            value(NS_DARKTABLE, "rejected").and_then(|v| match v.trim() {
+                "1" | "true" => Some(2),
+                "0" | "false" | "" => Some(0),
+                _ => None,
+            })
+        })
+        .or_else(|| {
+            value(NS_XMP, "Label").and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
+                "pick" | "select" => Some(1),
+                "reject" | "rejected" => Some(2),
+                _ => None,
+            })
+        })
+        .or(if rejected { Some(2) } else { None });
+    let mut seen = HashSet::new();
+    for node in &properties {
+        if matches!(
+            (node.uri.as_str(), node.name.as_str()),
+            (NS_DC, "subject") | (NS_LR, "hierarchicalSubject") | (NS_DIGIKAM, "TagsList")
+        ) {
+            let tags = meta.tags.get_or_insert_with(Vec::new);
+            for container in &node.children {
+                if container.uri != NS_RDF || !matches!(container.name.as_str(), "Bag" | "Seq") {
+                    continue;
+                }
+                for item in &container.children {
+                    let tag = item.text.trim();
+                    if item.uri == NS_RDF
+                        && item.name == "li"
+                        && !tag.is_empty()
+                        && !is_internal_system_tag(tag)
+                        && seen.insert(tag.to_lowercase())
+                    {
+                        tags.push(tag.to_string());
+                    }
                 }
             }
-            _ => {}
         }
     }
-
-    if let Some(label_val) = extract_ns_attribute(content, &xmp_prefixes, "Label")
-        .or_else(|| extract_ns_tag_value(content, &xmp_prefixes, "Label"))
-    {
-        let trimmed = label_val.trim();
-        if trimmed.eq_ignore_ascii_case("Reject") || trimmed.eq_ignore_ascii_case("Rejected") {
-            meta.culling_flag = Some(2);
-        } else if trimmed.eq_ignore_ascii_case("Pick") || trimmed.eq_ignore_ascii_case("Select") {
-            if meta.culling_flag != Some(2) {
-                meta.culling_flag = Some(1);
-            }
-        }
-    }
-
-    if rating_rejected && meta.culling_flag.unwrap_or(0) == 0 {
-        meta.culling_flag = Some(2);
-    }
-
-    // 3. Keywords / Tags (dc:subject, lr:hierarchicalSubject, digiKam:TagsList)
-    let mut has_tag_container = false;
-    let mut tags_set = HashSet::new();
-    let mut tags_list = Vec::new();
-
-    for block in [
-        extract_ns_tag_block(content, &dc_prefixes, "subject"),
-        extract_ns_tag_block(content, &lr_prefixes, "hierarchicalSubject"),
-        extract_ns_tag_block(content, &digikam_prefixes, "TagsList"),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        has_tag_container = true;
-        for raw_tag in extract_li_items_ns(&block, &rdf_prefixes) {
-            let clean = xml_unescape(raw_tag.trim());
-            if clean.is_empty() || is_internal_system_tag(&clean) {
-                continue;
-            }
-            if tags_set.insert(clean.to_lowercase()) {
-                tags_list.push(clean);
-            }
-        }
-    }
-
-    if has_tag_container {
-        meta.tags = Some(tags_list);
-    }
-
-    // 4. Comments / Description (dc:description -> exif:UserComment -> photoshop:Caption)
-    if let Some(desc) = extract_alt_or_tag_text(content, &dc_prefixes, "description", &rdf_prefixes)
-        .or_else(|| extract_alt_or_tag_text(content, &exif_prefixes, "UserComment", &rdf_prefixes))
-        .or_else(|| {
-            extract_ns_attribute(content, &photoshop_prefixes, "Caption")
-                .or_else(|| extract_ns_tag_value(content, &photoshop_prefixes, "Caption"))
-                .map(|s| xml_unescape(s.trim()))
-        })
-    {
-        meta.description = Some(desc);
-    }
-
-    meta
+    meta.description = value(NS_DC, "description")
+        .or_else(|| value(NS_EXIF, "UserComment"))
+        .or_else(|| value(NS_PHOTOSHOP, "Caption"));
+    Ok(meta)
 }
 
 /// Returns `true` for internal darktable / host system tags that should not be imported as user tags.
@@ -328,31 +295,109 @@ pub fn import_xmp_for_file_with_conn(
         return Ok(false);
     };
 
+    let info = fs::metadata(&sidecar_path).map_err(|e| e.to_string())?;
+    let fingerprint = format!(
+        "{}:{:?}:{}",
+        sidecar_path.display(),
+        info.modified().ok(),
+        info.len()
+    );
+    if mode != XmpImportMode::ManualOverwrite {
+        let previous: Option<String> = conn
+            .query_row(
+                "SELECT fingerprint FROM axmp_imports WHERE file_id = ?1",
+                [file_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        if previous.as_deref() == Some(&fingerprint) {
+            return Ok(false);
+        }
+    }
     let meta = read_xmp_file(&sidecar_path)?;
-    apply_xmp_metadata_to_db(file_id, &meta, conn, mode)
+    apply_with_state(file_id, &meta, conn, mode, Some(&fingerprint))
 }
 
-/// Applies parsed `XmpMetadata` to a file record in SQLite according to `mode`.
-pub fn apply_xmp_metadata_to_db(
+/// Installs durable import state and observes local edits, including clears.
+/// Import writes restore the prior dirty mask within the same transaction.
+pub fn initialize(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS axmp_imports (
+        file_id INTEGER PRIMARY KEY REFERENCES afiles(id) ON DELETE CASCADE,
+        fingerprint TEXT, dirty INTEGER NOT NULL DEFAULT 0
+    );",
+    )
+    .map_err(|e| e.to_string())?;
+    for (column, bit) in [("rating", 1), ("culling_flag", 2), ("comments", 4)] {
+        conn.execute_batch(&format!(
+            "CREATE TRIGGER IF NOT EXISTS axmp_local_{column}
+        AFTER UPDATE OF {column} ON afiles WHEN NEW.{column} IS NOT OLD.{column}
+        BEGIN INSERT INTO axmp_imports(file_id, dirty) VALUES(NEW.id, {bit})
+        ON CONFLICT(file_id) DO UPDATE SET dirty = dirty | {bit}; END;"
+        ))
+        .map_err(|e| e.to_string())?;
+    }
+    for (operation, row) in [("INSERT", "NEW"), ("DELETE", "OLD")] {
+        conn.execute_batch(&format!("CREATE TRIGGER IF NOT EXISTS axmp_local_tags_{operation}
+        AFTER {operation} ON afile_tags BEGIN
+        INSERT INTO axmp_imports(file_id, dirty) SELECT {row}.file_id, 8 WHERE EXISTS(SELECT 1 FROM afiles WHERE id = {row}.file_id)
+        ON CONFLICT(file_id) DO UPDATE SET dirty = dirty | 8; END;" )).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn apply_xmp_metadata_to_db(
     file_id: i64,
     meta: &XmpMetadata,
     conn: &Connection,
     mode: XmpImportMode,
 ) -> Result<bool, String> {
-    let (db_rating, db_culling_flag, db_comments): (i32, i32, Option<String>) = conn
+    apply_with_state(file_id, meta, conn, mode, None)
+}
+
+fn apply_with_state(
+    file_id: i64,
+    meta: &XmpMetadata,
+    conn: &Connection,
+    mode: XmpImportMode,
+    fingerprint: Option<&str>,
+) -> Result<bool, String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let dirty: i32 = tx
         .query_row(
-            "SELECT COALESCE(rating, 0), COALESCE(culling_flag, 0), comments FROM afiles WHERE id = ?1",
-            params![file_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            "SELECT dirty FROM axmp_imports WHERE file_id = ?1",
+            [file_id],
+            |r| r.get(0),
         )
-        .map_err(|e| format!("Failed to read existing file state for id {}: {}", file_id, e))?;
+        .unwrap_or(0);
+    let result = apply_fields(file_id, meta, &tx, mode, dirty)?;
+    tx.execute("INSERT INTO axmp_imports(file_id, fingerprint, dirty) VALUES(?1, ?2, ?3)
+        ON CONFLICT(file_id) DO UPDATE SET fingerprint = COALESCE(excluded.fingerprint, fingerprint), dirty = excluded.dirty",
+        params![file_id, fingerprint, dirty]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+fn apply_fields(
+    file_id: i64,
+    meta: &XmpMetadata,
+    conn: &Connection,
+    mode: XmpImportMode,
+    dirty: i32,
+) -> Result<bool, String> {
+    let (db_rating, db_culling_flag, db_comments): (i32, i32, Option<String>) = conn.query_row(
+        "SELECT COALESCE(rating, 0), COALESCE(culling_flag, 0), comments FROM afiles WHERE id = ?1", [file_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    ).map_err(|e| e.to_string())?;
 
     // 1. Rating
     if let Some(rating) = meta.rating {
         let clamped = rating.clamp(0, 5);
         let should_update = match mode {
             XmpImportMode::InitialScan => clamped > 0,
-            XmpImportMode::RescanNonDestructive => db_rating == 0 && clamped > 0,
+            XmpImportMode::RescanNonDestructive => dirty & 1 == 0 && db_rating == 0 && clamped > 0,
             XmpImportMode::ManualOverwrite => clamped != db_rating,
         };
         if should_update {
@@ -369,7 +414,9 @@ pub fn apply_xmp_metadata_to_db(
         let clamped = flag.clamp(0, 2);
         let should_update = match mode {
             XmpImportMode::InitialScan => clamped > 0,
-            XmpImportMode::RescanNonDestructive => db_culling_flag == 0 && clamped > 0,
+            XmpImportMode::RescanNonDestructive => {
+                dirty & 2 == 0 && db_culling_flag == 0 && clamped > 0
+            }
             XmpImportMode::ManualOverwrite => clamped != db_culling_flag,
         };
         if should_update {
@@ -384,13 +431,13 @@ pub fn apply_xmp_metadata_to_db(
     // 3. Comments / description
     if let Some(ref desc) = meta.description {
         let trimmed = desc.trim();
-        let db_comment_empty = db_comments
-            .as_deref()
-            .is_none_or(|c| c.trim().is_empty());
+        let db_comment_empty = db_comments.as_deref().is_none_or(|c| c.trim().is_empty());
 
         let should_update = match mode {
             XmpImportMode::InitialScan => !trimmed.is_empty(),
-            XmpImportMode::RescanNonDestructive => db_comment_empty && !trimmed.is_empty(),
+            XmpImportMode::RescanNonDestructive => {
+                dirty & 4 == 0 && db_comment_empty && !trimmed.is_empty()
+            }
             XmpImportMode::ManualOverwrite => true,
         };
         if should_update {
@@ -409,20 +456,33 @@ pub fn apply_xmp_metadata_to_db(
 
     // 4. Keywords / Tags
     if let Some(ref tags) = meta.tags {
+        if mode == XmpImportMode::RescanNonDestructive && dirty & 8 != 0 {
+            return Ok(true);
+        }
+        if mode == XmpImportMode::ManualOverwrite {
+            conn.execute("DELETE FROM afile_tags WHERE file_id = ?1", [file_id])
+                .map_err(|e| e.to_string())?;
+            conn.execute("UPDATE afiles SET has_tags = 0 WHERE id = ?1", [file_id])
+                .map_err(|e| e.to_string())?;
+        }
         if tags.is_empty() {
             if mode == XmpImportMode::ManualOverwrite {
-                conn.execute("DELETE FROM afile_tags WHERE file_id = ?1", params![file_id])
-                    .map_err(|e| e.to_string())?;
-                conn.execute("UPDATE afiles SET has_tags = 0 WHERE id = ?1", params![file_id])
-                    .map_err(|e| e.to_string())?;
+                conn.execute(
+                    "DELETE FROM afile_tags WHERE file_id = ?1",
+                    params![file_id],
+                )
+                .map_err(|e| e.to_string())?;
+                conn.execute(
+                    "UPDATE afiles SET has_tags = 0 WHERE id = ?1",
+                    params![file_id],
+                )
+                .map_err(|e| e.to_string())?;
             }
         } else {
             let default_group_id: i64 = conn
-                .query_row(
-                    "SELECT id FROM atag_groups WHERE is_default = 1",
-                    [],
-                    |r| r.get(0),
-                )
+                .query_row("SELECT id FROM atag_groups WHERE is_default = 1", [], |r| {
+                    r.get(0)
+                })
                 .unwrap_or(1);
 
             let mut added_any = false;
@@ -483,268 +543,157 @@ pub fn import_xmp_for_file_with_mode(
 // Namespace-Aware XML Parsing Helpers
 // ---------------------------------------------------------------------------
 
-struct XmpNamespaces {
-    prefix_to_uri: HashMap<String, String>,
+#[derive(Default)]
+struct XmlNode {
+    uri: String,
+    name: String,
+    text: String,
+    lang: Option<String>,
+    attributes: Vec<XmlNode>,
+    children: Vec<XmlNode>,
 }
-
-impl XmpNamespaces {
-    fn parse(xml: &str) -> Self {
-        let mut prefix_to_uri = HashMap::new();
-        let mut rest = xml;
-        while let Some(idx) = rest.find("xmlns:") {
-            let after_xmlns = &rest[idx + "xmlns:".len()..];
-            let Some(eq_idx) = after_xmlns.find('=') else {
-                break;
+impl XmlNode {
+    fn value(&self) -> String {
+        if let Some(alt) = self
+            .children
+            .iter()
+            .find(|n| n.uri == NS_RDF && n.name == "Alt")
+        {
+            let items = || {
+                alt.children
+                    .iter()
+                    .filter(|n| n.uri == NS_RDF && n.name == "li")
             };
-            let prefix = after_xmlns[..eq_idx].trim();
-            let after_eq = after_xmlns[eq_idx + 1..].trim_start();
-            let Some(quote_char) = after_eq.chars().next() else {
-                break;
-            };
-            if quote_char != '"' && quote_char != '\'' {
-                rest = after_eq;
-                continue;
-            }
-            let after_quote = &after_eq[quote_char.len_utf8()..];
-            let Some(end_quote) = after_quote.find(quote_char) else {
-                break;
-            };
-            let uri = after_quote[..end_quote].trim();
-            if !prefix.is_empty()
-                && prefix
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
-                prefix_to_uri.insert(prefix.to_string(), uri.to_string());
-            }
-            rest = &after_quote[end_quote + quote_char.len_utf8()..];
-        }
-        Self { prefix_to_uri }
-    }
-
-    fn prefixes_for(&self, target_uri: &str, fallbacks: &[&str]) -> Vec<String> {
-        let mut result = Vec::new();
-        for (prefix, uri) in &self.prefix_to_uri {
-            if uri == target_uri && !result.contains(prefix) {
-                result.push(prefix.clone());
-            }
-        }
-        for &fb in fallbacks {
-            let fb_str = fb.to_string();
-            // Include fallback prefix if it is not bound to a different namespace URI
-            if !result.contains(&fb_str)
-                && self
-                    .prefix_to_uri
-                    .get(&fb_str)
-                    .is_none_or(|uri| uri == target_uri)
-            {
-                result.push(fb_str);
-            }
-        }
-        result
-    }
-}
-
-fn xml_unescape(text: &str) -> String {
-    text.replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
-}
-
-fn extract_ns_attribute(xml: &str, prefixes: &[String], local_name: &str) -> Option<String> {
-    for prefix in prefixes {
-        let qname = format!("{}:{}", prefix, local_name);
-        if let Some(val) = extract_attribute(xml, &qname) {
-            return Some(val);
-        }
-    }
-    None
-}
-
-fn extract_ns_tag_value(xml: &str, prefixes: &[String], local_name: &str) -> Option<String> {
-    for prefix in prefixes {
-        let qname = format!("{}:{}", prefix, local_name);
-        if let Some(val) = extract_tag_value(xml, &qname) {
-            return Some(val);
-        }
-    }
-    None
-}
-
-fn extract_ns_tag_block(xml: &str, prefixes: &[String], local_name: &str) -> Option<String> {
-    for prefix in prefixes {
-        let qname = format!("{}:{}", prefix, local_name);
-        if let Some(block) = extract_tag_block(xml, &qname) {
-            return Some(block);
-        }
-    }
-    None
-}
-
-fn extract_attribute(xml: &str, attr_name: &str) -> Option<String> {
-    for quote in ['"', '\''] {
-        let needle = format!("{}={}", attr_name, quote);
-        let mut search_from = 0;
-        while let Some(rel_idx) = xml[search_from..].find(&needle) {
-            let idx = search_from + rel_idx;
-            // Ensure attribute name is preceded by whitespace or tag start
-            let valid_boundary = idx == 0
-                || xml[..idx]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c.is_whitespace());
-            let val_start = idx + needle.len();
-            if valid_boundary {
-                let end_idx = xml[val_start..].find(quote)? + val_start;
-                return Some(xml[val_start..end_idx].to_string());
-            }
-            search_from = val_start;
-        }
-    }
-    None
-}
-
-fn extract_tag_value(xml: &str, tag_name: &str) -> Option<String> {
-    let block = extract_tag_block(xml, tag_name)?;
-    // If self-closing `<tag.../>`, block is empty string
-    if block.is_empty() {
-        return Some(String::new());
-    }
-    // Extract inner content between first `>` and closing `</tag_name>`
-    let open_end = block.find('>')? + 1;
-    let close_tag = format!("</{}>", tag_name);
-    let close_start = block.rfind(&close_tag)?;
-    if open_end <= close_start {
-        Some(block[open_end..close_start].to_string())
-    } else {
-        Some(String::new())
-    }
-}
-
-fn extract_tag_block(xml: &str, tag_name: &str) -> Option<String> {
-    let open_prefix = format!("<{}", tag_name);
-    let close_tag = format!("</{}>", tag_name);
-    let mut search_from = 0;
-
-    while let Some(rel_idx) = xml[search_from..].find(&open_prefix) {
-        let open_start = search_from + rel_idx;
-        let after_name = open_start + open_prefix.len();
-        let next_char = xml[after_name..].chars().next();
-        if !next_char.is_some_and(|c| c == '>' || c == '/' || c.is_whitespace()) {
-            search_from = after_name;
-            continue;
-        }
-
-        let tag_end_rel = xml[after_name..].find('>')?;
-        let tag_end = after_name + tag_end_rel;
-        // Handle self-closing tag: `<dc:subject/>` or `<dc:description />`
-        if xml[open_start..tag_end].trim_end().ends_with('/') {
-            return Some(String::new());
-        }
-
-        let close_start = xml[tag_end + 1..].find(&close_tag)? + tag_end + 1;
-        let full_end = close_start + close_tag.len();
-        return Some(xml[open_start..full_end].to_string());
-    }
-    None
-}
-
-fn extract_li_items_ns(block: &str, rdf_prefixes: &[String]) -> Vec<String> {
-    for prefix in rdf_prefixes {
-        let li_tag = format!("{}:li", prefix);
-        let items = extract_elements_by_name(block, &li_tag);
-        if !items.is_empty() {
-            return items.into_iter().map(|(_, text)| text).collect();
-        }
-    }
-    Vec::new()
-}
-
-/// Extracts `(opening_tag_attributes, inner_text)` for all occurrences of `<tag_name ...>...</tag_name>`
-/// or self-closing `<tag_name .../>`.
-fn extract_elements_by_name(block: &str, tag_name: &str) -> Vec<(String, String)> {
-    let mut items = Vec::new();
-    let open_prefix = format!("<{}", tag_name);
-    let close_tag = format!("</{}>", tag_name);
-    let mut rest = block;
-
-    while let Some(open_idx) = rest.find(&open_prefix) {
-        let after_name = &rest[open_idx + open_prefix.len()..];
-        let next_char = after_name.chars().next();
-        if !next_char.is_some_and(|c| c == '>' || c == '/' || c.is_whitespace()) {
-            rest = after_name;
-            continue;
-        }
-        let Some(tag_end_rel) = after_name.find('>') else {
-            break;
-        };
-        let attrs = &after_name[..tag_end_rel];
-        if attrs.trim_end().ends_with('/') {
-            // Self-closing `<rdf:li .../>`
-            let clean_attrs = attrs.trim_end().trim_end_matches('/').to_string();
-            items.push((clean_attrs, String::new()));
-            rest = &after_name[tag_end_rel + 1..];
-            continue;
-        }
-
-        let content_start = open_idx + open_prefix.len() + tag_end_rel + 1;
-        let Some(close_rel) = rest[content_start..].find(&close_tag) else {
-            break;
-        };
-        let item_text = &rest[content_start..content_start + close_rel];
-        items.push((attrs.to_string(), item_text.to_string()));
-        rest = &rest[content_start + close_rel + close_tag.len()..];
-    }
-    items
-}
-
-/// Extracts text from an `rdf:Alt` container (preferring `xml:lang="x-default"`),
-/// direct tag text, or an attribute on `rdf:Description`.
-/// Preserves `Some(String::new())` when the property is explicitly present but empty.
-fn extract_alt_or_tag_text(
-    xml: &str,
-    prefixes: &[String],
-    local_name: &str,
-    rdf_prefixes: &[String],
-) -> Option<String> {
-    if let Some(attr_val) = extract_ns_attribute(xml, prefixes, local_name) {
-        return Some(xml_unescape(attr_val.trim()));
-    }
-
-    let block = extract_ns_tag_block(xml, prefixes, local_name)?;
-    if block.is_empty() {
-        // Self-closing tag such as `<dc:description/>`
-        return Some(String::new());
-    }
-
-    for rdf_prefix in rdf_prefixes {
-        let li_tag = format!("{}:li", rdf_prefix);
-        let li_items = extract_elements_by_name(&block, &li_tag);
-        if !li_items.is_empty() {
-            // Prefer xml:lang="x-default" if present
-            let chosen = li_items
-                .iter()
-                .find(|(attrs, _)| attrs.contains("x-default"))
-                .or_else(|| li_items.first())
-                .map(|(_, text)| xml_unescape(text.trim()))
+            return items()
+                .find(|n| n.lang.as_deref() == Some("x-default"))
+                .or_else(|| items().next())
+                .map(|n| n.text.trim().to_string())
                 .unwrap_or_default();
-            return Some(chosen);
+        }
+        self.text.trim().to_string()
+    }
+}
+fn collect_properties<'a>(node: &'a XmlNode, out: &mut Vec<&'a XmlNode>) {
+    if node.uri == NS_RDF && node.name == "Description" {
+        out.extend(node.attributes.iter());
+        out.extend(node.children.iter());
+    }
+    for child in &node.children {
+        collect_properties(child, out);
+    }
+}
+fn resolved_name(result: quick_xml::name::ResolveResult<'_>) -> Result<String, String> {
+    match result {
+        quick_xml::name::ResolveResult::Bound(ns) => {
+            String::from_utf8(ns.as_ref().to_vec()).map_err(|e| e.to_string())
+        }
+        quick_xml::name::ResolveResult::Unbound => Ok(String::new()),
+        quick_xml::name::ResolveResult::Unknown(prefix) => {
+            Err(format!("Unbound XML prefix: {:?}", prefix))
         }
     }
-
-    // No <rdf:li> items inside the block: check direct inner text (ignoring nested empty rdf:Alt)
-    if let Some(val) = extract_ns_tag_value(&block, prefixes, local_name) {
-        let trimmed = val.trim();
-        if trimmed.starts_with('<') {
-            // Contains empty container like `<rdf:Alt/>` or `<rdf:Alt></rdf:Alt>`
-            return Some(String::new());
-        }
-        return Some(xml_unescape(trimmed));
+}
+fn parse_xml(content: &str) -> Result<XmlNode, String> {
+    use quick_xml::{events::Event, reader::NsReader};
+    if content.len() > MAX_XMP_BYTES {
+        return Err("XMP exceeds 16 MiB size limit".into());
     }
-
-    Some(String::new())
+    let mut reader = NsReader::from_str(content);
+    let mut nodes = 0usize;
+    let mut expanded = 0usize;
+    let mut stack = vec![XmlNode::default()];
+    loop {
+        let event = reader.read_event().map_err(|e| e.to_string())?;
+        match event {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                if stack.len() > MAX_XML_DEPTH {
+                    return Err("XMP nesting depth limit exceeded".into());
+                }
+                nodes += 1;
+                if nodes > MAX_XML_NODES {
+                    return Err("XMP node limit exceeded".into());
+                }
+                let (ns, local) = reader.resolve_element(e.name());
+                let mut node = XmlNode {
+                    uri: resolved_name(ns)?,
+                    name: String::from_utf8_lossy(local.as_ref()).into_owned(),
+                    ..Default::default()
+                };
+                expanded += node.uri.len() + node.name.len();
+                if expanded > MAX_XML_EXPANDED_BYTES {
+                    return Err("XMP expanded text limit exceeded".into());
+                }
+                for attr in e.attributes() {
+                    let attr = attr.map_err(|e| e.to_string())?;
+                    nodes += 1;
+                    if nodes > MAX_XML_NODES {
+                        return Err("XMP node limit exceeded".into());
+                    }
+                    if attr.key.as_ref() == b"xmlns" || attr.key.as_ref().starts_with(b"xmlns:") {
+                        continue;
+                    }
+                    let (ns, local) = reader.resolve_attribute(attr.key);
+                    let uri = resolved_name(ns)?;
+                    let name = String::from_utf8_lossy(local.as_ref()).into_owned();
+                    let text = attr
+                        .decode_and_unescape_value(reader.decoder())
+                        .map_err(|e| e.to_string())?
+                        .into_owned();
+                    expanded += uri.len() + name.len() + text.len();
+                    if expanded > MAX_XML_EXPANDED_BYTES {
+                        return Err("XMP expanded text limit exceeded".into());
+                    }
+                    if uri == "http://www.w3.org/XML/1998/namespace" && name == "lang" {
+                        node.lang = Some(text.clone());
+                    }
+                    node.attributes.push(XmlNode {
+                        uri,
+                        name,
+                        text,
+                        ..Default::default()
+                    });
+                }
+                if matches!(event, Event::Empty(_)) {
+                    stack.last_mut().unwrap().children.push(node);
+                } else {
+                    stack.push(node);
+                }
+            }
+            Event::End(_) => {
+                if stack.len() <= 1 {
+                    return Err("Unexpected XML closing tag".into());
+                }
+                let node = stack.pop().unwrap();
+                stack.last_mut().unwrap().children.push(node);
+            }
+            Event::Text(e) => {
+                let text = e.unescape().map_err(|e| e.to_string())?;
+                if stack.len() == 1 && !text.trim().is_empty() {
+                    return Err("Text outside XML root".into());
+                }
+                expanded += text.len();
+                if expanded > MAX_XML_EXPANDED_BYTES {
+                    return Err("XMP expanded text limit exceeded".into());
+                }
+                stack.last_mut().unwrap().text.push_str(&text);
+            }
+            Event::CData(e) => {
+                let text = e.decode().map_err(|e| e.to_string())?;
+                expanded += text.len();
+                if expanded > MAX_XML_EXPANDED_BYTES {
+                    return Err("XMP expanded text limit exceeded".into());
+                }
+                stack.last_mut().unwrap().text.push_str(&text);
+            }
+            Event::DocType(_) => return Err("DTD is not supported in XMP".into()),
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if stack.len() != 1 || stack[0].children.len() != 1 {
+        return Err("Incomplete XML document or multiple roots".into());
+    }
+    Ok(stack.pop().unwrap())
 }
 
 #[cfg(test)]
@@ -792,6 +741,7 @@ mod tests {
             INSERT INTO atag_groups (id, name, is_default, sort_order) VALUES (1, 'Default', 1, 0);",
         )
         .unwrap();
+        initialize(&conn).unwrap();
         conn
     }
 
@@ -852,7 +802,7 @@ mod tests {
  </rdf:RDF>
 </x:xmpmeta>"#;
 
-        let meta = parse_xmp_str(xmp);
+        let meta = parse_xmp_str(xmp).unwrap();
         assert_eq!(meta.rating, Some(4));
         assert_eq!(meta.culling_flag, None);
         assert_eq!(
@@ -878,7 +828,7 @@ mod tests {
  </rdf:RDF>
 </x:xmpmeta>"#;
 
-        let missing_meta = parse_xmp_str(missing_xmp);
+        let missing_meta = parse_xmp_str(missing_xmp).unwrap();
         assert_eq!(missing_meta.rating, None);
         assert_eq!(missing_meta.culling_flag, None);
         assert_eq!(missing_meta.tags, None);
@@ -906,7 +856,7 @@ mod tests {
  </rdf:RDF>
 </x:xmpmeta>"#;
 
-        let empty_meta = parse_xmp_str(empty_xmp);
+        let empty_meta = parse_xmp_str(empty_xmp).unwrap();
         assert_eq!(empty_meta.rating, Some(0));
         assert_eq!(empty_meta.culling_flag, Some(0));
         assert_eq!(empty_meta.tags, Some(vec![]));
@@ -934,13 +884,10 @@ mod tests {
  </rdf:RDF>
 </x:xmpmeta>"#;
 
-        let meta = parse_xmp_str(xmp);
+        let meta = parse_xmp_str(xmp).unwrap();
         assert_eq!(meta.rating, Some(3));
         assert_eq!(meta.culling_flag, Some(2)); // Rejected via dt:rejected
-        assert_eq!(
-            meta.description.as_deref(),
-            Some("Default English caption")
-        );
+        assert_eq!(meta.description.as_deref(), Some("Default English caption"));
     }
 
     #[test]
@@ -978,10 +925,16 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute("INSERT INTO atags (id, name, group_id) VALUES (10, 'Favorite', 1)", [])
-            .unwrap();
-        conn.execute("INSERT INTO afile_tags (file_id, tag_id) VALUES (1, 10)", [])
-            .unwrap();
+        conn.execute(
+            "INSERT INTO atags (id, name, group_id) VALUES (10, 'Favorite', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO afile_tags (file_id, tag_id) VALUES (1, 10)",
+            [],
+        )
+        .unwrap();
 
         // 3. Background rescan runs on an updated sidecar (e.g. darktable saved exposure history with old Rating=2, Flag=1, and added "Mountains" tag)
         let rescan_xmp = XmpMetadata {
@@ -1005,7 +958,7 @@ mod tests {
         assert_eq!(flag_after, 2);
         assert_eq!(comments_after.as_deref(), Some("Local Lap edit"));
 
-        // Verify both local tag ("Favorite") and newly discovered XMP tag ("Mountains") are present
+        // Local edits to the tag set prevent automatic additions, including restoring deleted tags.
         let mut stmt = conn
             .prepare(
                 "SELECT t.name FROM atags t JOIN afile_tags ft ON t.id = ft.tag_id WHERE ft.file_id = 1 ORDER BY t.name",
@@ -1018,16 +971,8 @@ mod tests {
             .collect();
         assert_eq!(
             tag_names,
-            vec![
-                "Favorite".to_string(),
-                "Landscape".to_string(),
-                "Mountains".to_string()
-            ]
+            vec!["Favorite".to_string(), "Landscape".to_string(),]
         );
-
-        // 4. Also verify mtime gate: if user clears rating to 0 in Lap and rescans without XMP changing, rescan is skipped
-        assert!(!should_import_xmp_on_rescan(1700000000000, 1700000005000));
-        assert!(should_import_xmp_on_rescan(1700000010000, 1700000005000));
 
         // 5. Explicit manual "Import from XMP" overwrites present values from sidecar
         apply_xmp_metadata_to_db(1, &rescan_xmp, &conn, XmpImportMode::ManualOverwrite).unwrap();
@@ -1041,5 +986,286 @@ mod tests {
         assert_eq!(manual_rating, 2);
         assert_eq!(manual_flag, 1);
         assert_eq!(manual_comments.as_deref(), Some("Initial XMP caption"));
+    }
+    fn xml(body: &str) -> String {
+        format!(
+            r#"<rdf:RDF xmlns:rdf="{NS_RDF}"><rdf:Description xmlns:xmp="{NS_XMP}" xmlns:dc="{NS_DC}">{body}</rdf:Description></rdf:RDF>"#
+        )
+    }
+    #[test]
+    fn parses_xml_text_and_ignores_comments() {
+        let meta = parse_xmp_str(&xml(r#"<!-- xmp:Rating="5" --><xmp:Rating>2</xmp:Rating><dc:description><![CDATA[A < B]]> &amp; caf&#233;</dc:description>"#)).unwrap();
+        assert_eq!(meta.rating, Some(2));
+        assert_eq!(meta.description.as_deref(), Some("A < B & café"));
+        let meta = parse_xmp_str(&format!(
+            r#"<rdf:Description xmlns:rdf="{NS_RDF}" xmlns:xmp="{NS_XMP}" xmp:Rating = "5"/>"#
+        ))
+        .unwrap();
+        assert_eq!(meta.rating, Some(5));
+    }
+    #[test]
+    fn namespaces_are_scoped_and_language_is_exact() {
+        let meta = parse_xmp_str(&xml(r#"<dc:description><rdf:Alt><rdf:li note="x-default" xml:lang="fr">French</rdf:li><rdf:li xml:lang="x-default">Default</rdf:li></rdf:Alt></dc:description><other xmlns:xmp="urn:other" xmp:Rating="5"/><xmp:Rating>3</xmp:Rating>"#)).unwrap();
+        assert_eq!(meta.rating, Some(3));
+        assert_eq!(meta.description.as_deref(), Some("Default"));
+    }
+    #[test]
+    fn malformed_xml_is_an_error() {
+        for input in [
+            "",
+            "<root>",
+            "<root><a></root>",
+            "<a/><b/>",
+            "<root>&unknown;</root>",
+        ] {
+            assert!(parse_xmp_str(input).is_err(), "{input}");
+        }
+    }
+    fn file(conn: &Connection) {
+        conn.execute("INSERT INTO afiles(id,name) VALUES(1,'photo')", [])
+            .unwrap();
+    }
+    #[test]
+    fn rescan_protects_clears_and_removed_tags() {
+        let conn = setup_in_memory_db();
+        file(&conn);
+        let meta = XmpMetadata {
+            rating: Some(4),
+            culling_flag: Some(1),
+            description: Some("caption".into()),
+            tags: Some(vec!["tag".into()]),
+        };
+        apply_xmp_metadata_to_db(1, &meta, &conn, XmpImportMode::InitialScan).unwrap();
+        conn.execute(
+            "UPDATE afiles SET rating=0,culling_flag=0,comments=NULL WHERE id=1",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM afile_tags WHERE file_id=1", [])
+            .unwrap();
+        apply_xmp_metadata_to_db(1, &meta, &conn, XmpImportMode::RescanNonDestructive).unwrap();
+        let state: (i32, i32, Option<String>) = conn
+            .query_row(
+                "SELECT rating,culling_flag,comments FROM afiles WHERE id=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(state, (0, 0, None));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM afile_tags", [], |r| r
+                .get::<_, i32>(0))
+                .unwrap(),
+            0
+        );
+    }
+    #[test]
+    fn manual_tags_replace_missing_preserves_and_empty_clears() {
+        let conn = setup_in_memory_db();
+        file(&conn);
+        for name in ["old", "new"] {
+            apply_xmp_metadata_to_db(
+                1,
+                &XmpMetadata {
+                    tags: Some(vec![name.into()]),
+                    ..Default::default()
+                },
+                &conn,
+                XmpImportMode::ManualOverwrite,
+            )
+            .unwrap();
+        }
+        apply_xmp_metadata_to_db(
+            1,
+            &XmpMetadata::default(),
+            &conn,
+            XmpImportMode::ManualOverwrite,
+        )
+        .unwrap();
+        let tags: String = conn
+            .query_row(
+                "SELECT group_concat(name) FROM atags JOIN afile_tags ON tag_id=atags.id",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tags, "new");
+        apply_xmp_metadata_to_db(
+            1,
+            &XmpMetadata {
+                tags: Some(vec![]),
+                ..Default::default()
+            },
+            &conn,
+            XmpImportMode::ManualOverwrite,
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row("SELECT has_tags FROM afiles", [], |r| r.get::<_, i32>(0))
+                .unwrap(),
+            0
+        );
+    }
+    #[test]
+    fn failure_rolls_back_all_fields_and_dirty_tracking() {
+        let conn = setup_in_memory_db();
+        file(&conn);
+        conn.execute_batch("CREATE TRIGGER fail_tag BEFORE INSERT ON atags BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+        let meta = XmpMetadata {
+            rating: Some(5),
+            tags: Some(vec!["fail".into()]),
+            ..Default::default()
+        };
+        assert!(apply_xmp_metadata_to_db(1, &meta, &conn, XmpImportMode::ManualOverwrite).is_err());
+        assert_eq!(
+            conn.query_row("SELECT rating FROM afiles", [], |r| r.get::<_, i32>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM axmp_imports", [], |r| r
+                .get::<_, i32>(0))
+                .unwrap(),
+            0
+        );
+    }
+    #[test]
+    fn existing_sidecars_import_independently_of_photo_scan_time() {
+        let conn = setup_in_memory_db();
+        file(&conn);
+        let dir = create_temp_test_dir("state");
+        let image = dir.join("photo.RAF");
+        let sidecar = dir.join("photo.RAF.xmp");
+        fs::write(&sidecar, xml("<xmp:Rating>4</xmp:Rating>")).unwrap();
+        let path = image.to_str().unwrap();
+        assert!(
+            import_xmp_for_file_with_conn(1, path, &conn, XmpImportMode::RescanNonDestructive)
+                .unwrap()
+        );
+        assert!(
+            !import_xmp_for_file_with_conn(1, path, &conn, XmpImportMode::RescanNonDestructive)
+                .unwrap()
+        );
+        conn.execute("UPDATE afiles SET rating=0 WHERE id=1", [])
+            .unwrap();
+        fs::write(&sidecar, xml("<xmp:Rating>5</xmp:Rating><!-- changed -->")).unwrap();
+        assert!(
+            import_xmp_for_file_with_conn(1, path, &conn, XmpImportMode::RescanNonDestructive)
+                .unwrap()
+        );
+        assert_eq!(
+            conn.query_row("SELECT rating FROM afiles", [], |r| r.get::<_, i32>(0))
+                .unwrap(),
+            0
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn mixed_case_full_name_takes_priority_and_negative_cache_invalidates() {
+        let dir = create_temp_test_dir("cache");
+        let image = dir.join("photo.RAF");
+        assert!(find_xmp_sidecar(&image).is_none());
+        let stem = dir.join("photo.xmp");
+        fs::write(&stem, "").unwrap();
+        assert_eq!(find_xmp_sidecar(&image), Some(stem));
+        let full = dir.join("photo.RAF.Xmp");
+        fs::write(&full, "").unwrap();
+        assert_eq!(
+            fs::canonicalize(find_xmp_sidecar(&image).unwrap()).unwrap(),
+            fs::canonicalize(full).unwrap()
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn photo_case_is_preserved() {
+        let dir = create_temp_test_dir("case");
+        fs::write(dir.join("A.RAF.Xmp"), "").unwrap();
+        assert!(find_xmp_sidecar(&dir.join("a.RAF")).is_none());
+        assert!(find_xmp_sidecar(&dir.join("A.RAF")).is_some());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn new_scan_rebuilds_index_without_directory_timestamp() {
+        let dir = create_temp_test_dir("generation");
+        let image = dir.join("photo.RAF");
+        {
+            let _scan = sidecar_scan(101);
+            assert!(find_xmp_sidecar(&image).is_none());
+            fs::write(dir.join("photo.Xmp"), "").unwrap();
+            assert!(find_xmp_sidecar(&image).is_none());
+        }
+        {
+            let _scan = sidecar_scan(102);
+            assert!(find_xmp_sidecar(&image).is_some());
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn rejects_resource_exhaustion() {
+        let deep = format!(
+            "{}{}",
+            "<a>".repeat(MAX_XML_DEPTH + 1),
+            "</a>".repeat(MAX_XML_DEPTH + 1)
+        );
+        assert!(parse_xmp_str(&deep).unwrap_err().contains("depth"));
+        let wide = format!("<root>{}</root>", "<a/>".repeat(MAX_XML_NODES));
+        assert!(parse_xmp_str(&wide).unwrap_err().contains("node"));
+        assert!(
+            parse_xmp_str(&" ".repeat(MAX_XMP_BYTES + 1))
+                .unwrap_err()
+                .contains("size")
+        );
+        let amplified = format!(
+            "<root xmlns:n='{}'>{}</root>",
+            "x".repeat(1024 * 1024),
+            "<n:a/>".repeat(40)
+        );
+        assert!(parse_xmp_str(&amplified).unwrap_err().contains("expanded"));
+        let dir = create_temp_test_dir("size");
+        let path = dir.join("huge.xmp");
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_XMP_BYTES as u64 + 1)
+            .unwrap();
+        assert!(read_xmp_file(&path).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn batch_continues_after_failure_and_reports_each_result() {
+        let conn = setup_in_memory_db();
+        let dir = create_temp_test_dir("batch");
+        let mut files = Vec::new();
+        for id in 1..=4 {
+            conn.execute(
+                "INSERT INTO afiles(id,name) VALUES(?1,?2)",
+                params![id, format!("p{id}")],
+            )
+            .unwrap();
+            let path = dir.join(format!("p{id}.RAF"));
+            if id != 4 {
+                fs::write(
+                    dir.join(format!("p{id}.xmp")),
+                    if id == 2 {
+                        "<broken>".into()
+                    } else {
+                        xml("<xmp:Rating>5</xmp:Rating>")
+                    },
+                )
+                .unwrap();
+            }
+            files.push((id, path.to_string_lossy().into_owned()));
+        }
+        let result = import_batch(&files, &conn);
+        assert_eq!(result.imported_ids, vec![1, 3]);
+        assert_eq!(result.skipped_ids, vec![4]);
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].file_id, 2);
+        assert_eq!(
+            conn.query_row("SELECT rating FROM afiles WHERE id=2", [], |r| r
+                .get::<_, i32>(0))
+                .unwrap(),
+            0
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 }

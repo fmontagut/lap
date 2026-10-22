@@ -741,7 +741,8 @@
       "remove_from_collection": "컬렉션에서 제거",
       "create_montage": "콜라주 만들기",
       "import_xmp": "XMP에서 가져오기",
-      "xmp_import_success": "{count}개의 XMP 사이드카에서 메타데이터를 가져왔습니다"
+      "xmp_import_success": "{count}개의 XMP 사이드카에서 메타데이터를 가져왔습니다",
+      "xmp_import_failed": "파일 {count}개의 XMP 가져오기에 실패했습니다"
     },
     "calendar": {
       "monthly": "월별",

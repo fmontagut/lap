@@ -3778,6 +3778,7 @@ impl AFile {
         folder_id: i64, file_path: &str, file_type: i64, last_scan_time: i64,
         raw_info: Option<t_libraw::RawInfo>,
     ) -> Result<(Self, i32), String> {
+        let _xmp_scan = crate::t_xmp::sidecar_scan(last_scan_time);
         // Check if the file exists
         let existing_file = Self::fetch(folder_id, file_path)?;
         // Opening an online-only file downloads it: decide from its attributes first.
@@ -3916,7 +3917,6 @@ impl AFile {
                 // Not modified and thumb exists, but we still need to update last_scan_time
                 // for the mark-and-sweep deletion logic.
                 if let Some(file_id) = file.id {
-                    let prev_scan = file.last_scan_time.unwrap_or(0);
                     let _ = Self::update_column(file_id, "last_scan_time", &last_scan_time);
                     if file
                         .comments
@@ -3928,10 +3928,7 @@ impl AFile {
                             file.comments = Some(comment);
                         }
                     }
-                    if crate::t_xmp::is_xmp_import_enabled()
-                        && crate::t_xmp::find_newer_xmp_sidecar(Path::new(file_path), prev_scan)
-                            .is_some()
-                    {
+                    if crate::t_xmp::is_xmp_import_enabled() {
                         if let Ok(conn) = open_conn() {
                             if let Ok(true) = crate::t_xmp::import_xmp_for_file_with_conn(
                                 file_id,
@@ -4039,6 +4036,7 @@ impl AFile {
         file_path: &str,
         last_scan_time: i64,
     ) -> Result<Option<Self>, String> {
+        let _xmp_scan = crate::t_xmp::sidecar_scan(last_scan_time);
         // get old file info
         let old_file_info =
             Self::get_file_info(file_id)?.ok_or_else(|| "File not found".to_string())?;
@@ -4080,10 +4078,7 @@ impl AFile {
         // update the file info
         Self::update(file_id, &new_file_info)?;
 
-        let prev_scan = old_file_info.last_scan_time.unwrap_or(0);
-        if crate::t_xmp::is_xmp_import_enabled()
-            && crate::t_xmp::find_newer_xmp_sidecar(Path::new(file_path), prev_scan).is_some()
-        {
+        if crate::t_xmp::is_xmp_import_enabled() {
             let _ = crate::t_xmp::import_xmp_for_file_with_mode(
                 file_id,
                 file_path,
@@ -10433,6 +10428,7 @@ fn create_db_internal() -> Result<(), String> {
 
     // Run schema migrations after base tables are ensured.
     crate::t_migration::check_and_migrate(&conn)?;
+    crate::t_xmp::initialize(&conn)?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_afiles_content_identifier ON afiles(content_identifier)",
         [],

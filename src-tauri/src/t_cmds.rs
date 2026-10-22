@@ -3158,24 +3158,12 @@ pub fn set_xmp_import_settings(import_xmp_sidecars: bool) {
 }
 
 #[tauri::command]
-pub async fn import_xmp_metadata(file_ids: Vec<i64>) -> Result<usize, String> {
+pub async fn import_xmp_metadata(file_ids: Vec<i64>) -> Result<crate::t_xmp::XmpBatchResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let files = AFile::get_files_by_ids(&file_ids)?;
         let conn = crate::t_sqlite::open_conn()?;
-        let mut imported_count = 0usize;
-        for f in files {
-            if let (Some(id), Some(ref path)) = (f.id, f.file_path) {
-                if let Ok(true) = crate::t_xmp::import_xmp_for_file_with_conn(
-                    id,
-                    path,
-                    &conn,
-                    crate::t_xmp::XmpImportMode::ManualOverwrite,
-                ) {
-                    imported_count += 1;
-                }
-            }
-        }
-        Ok(imported_count)
+        let paths: Vec<_> = files.into_iter().filter_map(|f| Some((f.id?, f.file_path?))).collect();
+        Ok(crate::t_xmp::import_batch(&paths, &conn))
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?
